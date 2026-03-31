@@ -239,6 +239,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const totalBoms = boms.length;
 
   const [isImporting, setIsImporting] = useState(false);
+  const [pendingImportItems, setPendingImportItems] = useState<any[] | null>(null);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -252,28 +253,109 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         const wb = XLSX.read(bstr, { type: 'binary' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws);
+        // Read as array of arrays to detect format
+        const rawData = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+        
+        let isFGReport = false;
+        // Scan first 10 rows for the FG report signature
+        for (let i = 0; i < Math.min(10, rawData.length); i++) {
+          const rowStr = (rawData[i] || []).join(' ');
+          if (rowStr.includes('รายงานยอดสินค้า (รวมทุกยอด)') || rowStr.includes('บริษัท เคแพค')) {
+             isFGReport = true;
+             break;
+          }
+        }
 
-        const importedItems = data.map((row: any) => {
-          return {
-            id: row['รหัสสินค้า'] || row['code'] || `ITEM-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-            code: row['รหัสสินค้า'] || row['code'] || '',
-            name: row['ชื่อสินค้า'] || row['name'] || '',
-            category: row['หมวดหมู่'] || row['category'] || 'Other',
-            unit: row['หน่วย'] || row['unit'] || 'pcs',
-            currentStock: Number(String(row['ยอดคงเหลือ'] || row['currentStock'] || 0).replace(/,/g, '')),
-            minStock: Number(String(row['Min Stock'] || row['minStock'] || 0).replace(/,/g, '')),
-            maxStock: Number(String(row['Max Stock'] || row['maxStock'] || 0).replace(/,/g, '')),
-            location: row['สถานที่เก็บ'] || row['location'] || '',
-            lastUpdated: new Date().toISOString(),
-            group: row['กลุ่ม'] || row['group'] || '',
-            remarks: row['หมายเหตุ'] || row['remarks'] || '',
-            usage: row['การใช้งาน'] || row['usage'] || ''
-          };
-        });
+        const importedItems: any[] = [];
 
-        if (onImportInventory && importedItems.length > 0) {
-          await onImportInventory(importedItems);
+        if (isFGReport) {
+          // --- FG REPORT PARSING LOGIC ---
+          let isDataRow = false;
+          for (let i = 0; i < rawData.length; i++) {
+            const row: any = rawData[i];
+            
+            // Detect header row to start reading data
+            if (row[0] === 'รหัสสินค้า' && row[1] === 'ชื่อสินค้า') {
+              isDataRow = true;
+              continue;
+            }
+
+            if (isDataRow) {
+              // Stop reading if we hit an empty row or a row that doesn't look like data
+              if (!row[0] && !row[1]) continue;
+
+              // Extract data based on the provided format
+              const code = String(row[0] || '').trim();
+              const name = String(row[1] || '').trim();
+              
+              let currentStockStr = String(row[2] || '').trim();
+              if (!currentStockStr && row[3]) {
+                currentStockStr = String(row[3]).trim();
+              }
+              
+              let remarks = '';
+              if (row[3] && String(row[3]).trim() !== currentStockStr) {
+                 remarks = String(row[3]).trim();
+              } else if (row[4]) {
+                 remarks = String(row[4]).trim();
+              }
+
+              const currentStock = Number(currentStockStr.replace(/,/g, ''));
+
+              if (code && name) {
+                let category = 'FG'; 
+                if (name.includes('Preform') || name.includes('พรีฟอร์ม')) category = 'Preform';
+                if (name.includes('ฝา')) category = 'Other'; 
+                
+                importedItems.push({
+                  id: code, 
+                  code: code,
+                  name: name,
+                  category: category as any,
+                  unit: name.includes('กล่อง') ? 'box' : (name.includes('แพ็ค') ? 'pack' : 'pcs'), 
+                  currentStock: isNaN(currentStock) ? 0 : currentStock,
+                  minStock: 0, 
+                  maxStock: 0, 
+                  location: 'รง.ใหม่', 
+                  lastUpdated: new Date().toISOString(),
+                  group: '',
+                  remarks: remarks,
+                  usage: ''
+                });
+              }
+            }
+          }
+        } else {
+          // --- STANDARD TEMPLATE PARSING LOGIC ---
+          const objectData = XLSX.utils.sheet_to_json(ws);
+          objectData.forEach((row: any) => {
+            const code = row['รหัสสินค้า'] || row['code'] || '';
+            const name = row['ชื่อสินค้า'] || row['name'] || '';
+            
+            if (!code && !name) return; // Skip empty rows
+
+            importedItems.push({
+              id: code || `ITEM-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+              code: code,
+              name: name,
+              category: (row['หมวดหมู่'] || row['category'] || 'Other') as any,
+              unit: row['หน่วย'] || row['unit'] || 'pcs',
+              currentStock: Number(String(row['ยอดคงเหลือ'] || row['currentStock'] || 0).replace(/,/g, '')),
+              minStock: Number(String(row['Min Stock'] || row['minStock'] || 0).replace(/,/g, '')),
+              maxStock: Number(String(row['Max Stock'] || row['maxStock'] || 0).replace(/,/g, '')),
+              location: row['สถานที่เก็บ'] || row['location'] || '',
+              lastUpdated: new Date().toISOString(),
+              group: row['กลุ่ม'] || row['group'] || '',
+              remarks: row['หมายเหตุ'] || row['remarks'] || '',
+              usage: row['การใช้งาน'] || row['usage'] || ''
+            });
+          });
+        }
+
+        if (importedItems.length > 0) {
+          setPendingImportItems(importedItems);
+        } else {
+           alert("ไม่พบข้อมูลที่สามารถนำเข้าได้ กรุณาตรวจสอบรูปแบบไฟล์");
         }
       } catch (error) {
         console.error("Error parsing Excel file:", error);
@@ -286,6 +368,26 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       }
     };
     reader.readAsBinaryString(file);
+  };
+
+  const confirmImport = async () => {
+    if (!pendingImportItems || !onImportInventory) return;
+    
+    try {
+      setIsImporting(true);
+      await onImportInventory(pendingImportItems);
+      alert(`นำเข้าข้อมูลสำเร็จจำนวน ${pendingImportItems.length} รายการ`);
+      setPendingImportItems(null);
+    } catch (error) {
+      console.error("Error importing items:", error);
+      alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล");
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const cancelImport = () => {
+    setPendingImportItems(null);
   };
 
   const handleDownloadTemplate = () => {
@@ -789,6 +891,64 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   </>
                 ) : (
                   'บันทึกการเปลี่ยนแปลง'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Confirmation Modal */}
+      {pendingImportItems && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center p-4 border-b border-slate-200 bg-slate-50">
+              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <Upload size={20} className="text-emerald-600" />
+                ยืนยันการนำเข้าข้อมูล
+              </h2>
+              <button 
+                onClick={cancelImport}
+                className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              <div className="bg-emerald-50 text-emerald-800 p-4 rounded-lg text-sm border border-emerald-200 flex items-start gap-3">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-bold mb-1">อ่านไฟล์สำเร็จ!</p>
+                  <p>พบข้อมูลสินค้าที่สามารถนำเข้าได้จำนวน <strong>{pendingImportItems.length}</strong> รายการ</p>
+                </div>
+              </div>
+              
+              <p className="text-sm text-slate-600">
+                คุณต้องการยืนยันการนำเข้าข้อมูลเหล่านี้เข้าสู่ระบบหรือไม่? การดำเนินการนี้จะอัปเดตข้อมูลสินค้าคงคลังของคุณ
+              </p>
+            </div>
+            
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-2">
+              <button 
+                onClick={cancelImport}
+                className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg text-sm font-medium transition-colors"
+                disabled={isImporting}
+              >
+                ยกเลิก
+              </button>
+              <button 
+                onClick={confirmImport}
+                disabled={isImporting}
+                className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {isImporting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    กำลังนำเข้า...
+                  </>
+                ) : (
+                  'ยืนยันนำเข้าข้อมูล'
                 )}
               </button>
             </div>

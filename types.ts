@@ -3,6 +3,19 @@
 
 export type Status = 'Running' | 'Completed' | 'Delayed' | 'Stopped' | 'Paused' | 'Maintenance' | 'No Plan' | 'Rescheduled' | 'Planned';
 
+export type DatePeriod = 'all' | 'today' | 'this_week' | 'this_month' | 'last_month';
+
+export interface AppDocument {
+  id: string;
+  name: string;
+  type: string;
+  url: string;
+  size: number;
+  uploadedAt: string;
+  uploader: string;
+  parsedContent?: string; // Storing a stringified version of the content for AI
+}
+
 export interface RawMaterial {
   id: string;
   inventoryItemId?: string; // Link back to Inventory
@@ -68,6 +81,7 @@ export interface ProductionJob {
   startDate: string; // ISO String
   endDate: string; // ISO String
   status: Status;
+  note?: string;
   priority?: 'Normal' | 'Urgent'; 
   jobType?: 'Planned' | 'Inserted' | 'Rework';
   remarks?: string;
@@ -190,12 +204,13 @@ export const sortMachines = (machineIds: string[]): string[] => {
 // --- New Types for History & AI ---
 export interface AiMessage {
   id?: string;
-  role: 'user' | 'model';
+  role: 'user' | 'model' | 'system';
   text: string;
   image?: string; 
   fileName?: string;
   fileType?: string;
   timestamp: string;
+  processed?: boolean;
   actionProposal?: {
     type: 'UPDATE' | 'CREATE' | 'BATCH_UPSERT' | 'GENERATE_FORM' | 'LOG_DOWNTIME';
     data: any;
@@ -238,6 +253,14 @@ export interface FormTemplate {
   html: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DailyReportLog {
+  id: string;
+  date: string;
+  rawText: string;
+  generatedReport: string;
+  createdBy: string;
 }
 
 export interface CustomKnowledge {

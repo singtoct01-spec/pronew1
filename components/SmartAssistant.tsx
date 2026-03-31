@@ -3,9 +3,9 @@
 
 
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
-import { ProductionJob, SIMULATED_NOW, InventoryItem, ProductBOM, ProductSpec, MachineMoldCapability, AiMessage, FormTemplate, CustomKnowledge, DowntimeLog, ShiftProductionLog } from '../types';
+import { ProductionJob, SIMULATED_NOW, InventoryItem, ProductBOM, ProductSpec, MachineMoldCapability, AiMessage, FormTemplate, CustomKnowledge, DowntimeLog, ShiftProductionLog, AppDocument } from '../types';
 import { Send, Bot, X, Loader2, CheckCircle, AlertTriangle, Paperclip, Image as ImageIcon, Trash2, BrainCircuit, FileSpreadsheet, MessageSquareText, Key, FileText } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -23,6 +23,9 @@ interface SmartAssistantProps {
   customKnowledge?: CustomKnowledge[];
   downtimeLogs?: DowntimeLog[];
   shiftProductionLogs?: ShiftProductionLog[];
+  dailyReports?: any[];
+  documents?: any[];
+  logs?: any[];
   onUpdateJob: (job: ProductionJob) => void;
   onCreateJob: (job: ProductionJob) => void;
   onDeleteJob?: (jobId: string) => void;
@@ -45,6 +48,7 @@ interface SmartAssistantProps {
   messages: AiMessage[];
   setMessages: React.Dispatch<React.SetStateAction<AiMessage[]>>;
   onUpdateAiMessage?: (updatedMessage: AiMessage) => void;
+  selectedPeriod?: string;
 }
 
 // Define structure for selected file
@@ -55,7 +59,12 @@ type UploadedFile = {
   content?: string; // For excel (parsed CSV/JSON string)
 };
 
-export const SmartAssistant: React.FC<SmartAssistantProps> = ({ 
+export interface SmartAssistantHandle {
+  notifyEvent: (eventText: string) => void;
+  analyzeFile: (file: AppDocument) => void;
+}
+
+export const SmartAssistant = forwardRef<SmartAssistantHandle, SmartAssistantProps>(({ 
   isOpen, 
   onClose, 
   jobs,
@@ -67,6 +76,9 @@ export const SmartAssistant: React.FC<SmartAssistantProps> = ({
   customKnowledge,
   downtimeLogs,
   shiftProductionLogs,
+  dailyReports,
+  documents,
+  logs,
   onUpdateJob,
   onCreateJob,
   onDeleteJob,
@@ -88,14 +100,55 @@ export const SmartAssistant: React.FC<SmartAssistantProps> = ({
   onOpenImportModal,
   messages,
   setMessages,
-  onUpdateAiMessage
-}) => {
+  onUpdateAiMessage,
+  selectedPeriod
+}, ref) => {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<UploadedFile | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pendingSystemEventsRef = useRef<string[]>([]);
+
+  useImperativeHandle(ref, () => ({
+    notifyEvent: (eventText: string) => {
+      // Add to UI immediately so user sees the event
+      setMessages(prev => [...prev, { 
+        role: 'system', 
+        text: eventText, 
+        timestamp: new Date().toISOString()
+      }]);
+      // Queue for batch analysis
+      pendingSystemEventsRef.current.push(eventText);
+    },
+    analyzeFile: (file: AppDocument) => {
+      const prompt = `ช่วยวิเคราะห์ไฟล์เอกสารนี้ให้หน่อยครับ\nชื่อไฟล์: ${file.name}\nประเภท: ${file.type}\nขนาด: ${file.size} bytes\n\nข้อมูลในไฟล์:\n${file.parsedContent || 'ไม่มีข้อมูลเนื้อหาที่อ่านได้'}`;
+      handleSend(prompt);
+    }
+  }));
+
+  // Batch system events analysis every 10 minutes
+  const handleSendRef = useRef<any>(null);
+  useEffect(() => {
+    handleSendRef.current = handleSend;
+  });
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      if (pendingSystemEventsRef.current.length > 0) {
+        const eventsToAnalyze = [...pendingSystemEventsRef.current];
+        pendingSystemEventsRef.current = []; // clear queue
+        
+        const prompt = `มีการเคลื่อนไหวในระบบในช่วง 10 นาทีที่ผ่านมาดังนี้:\n- ${eventsToAnalyze.join('\n- ')}\n\nช่วยวิเคราะห์และสรุปให้หน่อยว่ามีอะไรน่าเป็นห่วง หรือต้องดำเนินการอะไรไหม (ถ้าไม่มีอะไรน่าเป็นห่วง ให้ตอบรับสั้นๆ)`;
+        
+        // Send to AI but hide this prompt from UI
+        handleSendRef.current(prompt, true, true);
+      }
+    }, 10 * 60 * 1000); // 10 minutes
+
+    return () => clearInterval(intervalId);
+  }, []);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -197,25 +250,30 @@ export const SmartAssistant: React.FC<SmartAssistantProps> = ({
     }
   };
 
-  const handleSend = async () => {
-    if (!input.trim() && !selectedFile) return;
+  const handleSend = async (overrideText?: string, isSystemEvent: boolean = false, hideFromUI: boolean = false) => {
+    const textToSend = isSystemEvent ? (overrideText || '') : (overrideText || input);
+    if (!isSystemEvent && !textToSend.trim() && !selectedFile) return;
 
-    const userMsgText = input;
-    const currentFile = selectedFile;
+    const userMsgText = textToSend;
+    const currentFile = isSystemEvent ? null : selectedFile;
 
-    // Reset Input State
-    setInput('');
-    clearFile();
+    if (!isSystemEvent) {
+      // Reset Input State
+      setInput('');
+      clearFile();
+    }
 
     // Add User Message to UI
-    setMessages(prev => [...prev, { 
-      role: 'user', 
-      text: userMsgText, 
-      image: currentFile?.type === 'image' ? currentFile.preview : undefined, // Display image if it is one
-      fileName: currentFile && currentFile.type !== 'image' ? currentFile.file.name : undefined,
-      fileType: currentFile && currentFile.type !== 'image' ? currentFile.type : undefined,
-      timestamp: new Date().toISOString()
-    }]);
+    if (!hideFromUI) {
+      setMessages(prev => [...prev, { 
+        role: isSystemEvent ? 'system' : 'user', 
+        text: userMsgText, 
+        image: currentFile?.type === 'image' ? currentFile.preview : undefined, // Display image if it is one
+        fileName: currentFile && currentFile.type !== 'image' ? currentFile.file.name : undefined,
+        fileType: currentFile && currentFile.type !== 'image' ? currentFile.type : undefined,
+        timestamp: new Date().toISOString()
+      }]);
+    }
 
     setIsLoading(true);
 
@@ -254,7 +312,10 @@ export const SmartAssistant: React.FC<SmartAssistantProps> = ({
         savedFormTemplates: formTemplates?.map(f => ({ id: f.id, title: f.title, html: f.html })) || [],
         customKnowledge: customKnowledge?.map(k => ({ topic: k.topic, content: k.content, linkedData: k.linkedData, files: k.files?.map(f => ({ name: f.name, url: f.url })) })) || [],
         downtimeHistory: downtimeLogs?.map(d => ({ machineId: d.machineId, date: d.date, durationMinutes: d.durationMinutes, category: d.category, reason: d.reason })) || [],
-        shiftProductionLogs: shiftProductionLogs?.map(s => ({ date: s.date, shift: s.shift, machineId: s.machineId, target: s.target, actual: s.actual, variance: s.variance, reason: s.reason })) || []
+        shiftProductionLogs: shiftProductionLogs?.map(s => ({ date: s.date, shift: s.shift, machineId: s.machineId, target: s.target, actual: s.actual, variance: s.variance, reason: s.reason })) || [],
+        dailyReports: dailyReports?.map(r => ({ date: r.date, summary: r.summary, keyInsights: r.keyInsights })) || [],
+        documents: documents?.map(d => ({ id: d.id, name: d.name, type: d.type, uploadDate: d.uploadDate, contentSummary: d.content ? d.content.substring(0, 200) + '...' : '' })) || [],
+        recentActivityLogs: logs?.slice(0, 30).map(l => ({ timestamp: l.timestamp, user: l.user, action: l.action, details: l.details })) || []
       };
 
       // 2. Initialize Gemini
@@ -281,6 +342,10 @@ export const SmartAssistant: React.FC<SmartAssistantProps> = ({
       const systemPrompt = `
         You are "ProPlanner Brain", a **Senior Production Manager** at KPAC Plastics Factory.
         You are intelligent, witty, proactive, and deeply understand manufacturing logistics.
+
+        **CURRENT CONTEXT:**
+        - Current Time: ${new Date().toLocaleString('en-GB')}
+        - Selected Period Filter: ${selectedPeriod || 'all'} (You should focus your analysis on this period unless asked otherwise)
 
         **YOUR PERSONALITY:**
         - You don't just answer; you **analyze**.
@@ -310,15 +375,52 @@ export const SmartAssistant: React.FC<SmartAssistantProps> = ({
         3. **Optimization:** If you see short runs of different colors on one machine, suggest grouping them to save setup time.
         4. **Realism:** If a plan is impossible (e.g., producing 100k in 1 hour), say it's impossible.
         5. **Update Actuals:** If the user provides the *total* actual production for a job (e.g., "ยอดรวมตอนนี้ 60,000"), you MUST calculate the difference between the new total and the current \`actualProduction\`, and call \`updateActualProduction\` with the *difference* (e.g., actuals = 5325). Only update jobs that are currently 'Running'. If the machine is not running, warn the user.
+        6. **System Events:** You will receive messages with the role 'system' when actions happen in the web app (e.g., "ผู้ใช้งานได้นำเข้าแผนการผลิตใหม่..."). Acknowledge these events briefly and proactively offer to help analyze the new data or changes.
+        7. **FG Stock Import Analysis:** When the user imports FG stock (Finished Goods), you should analyze the 'remarks' (หมายเหตุ) field. If you see notes like "ส่ง 3/4 ยอด 5040 ใบ" or "ใช้ 31/3 ยอด 35,424 ใบ", this means there are pending orders or reservations. You MUST calculate the "Available Stock" (ยอดคงเหลือ - ยอดจอง) and warn the user if the Available Stock is negative, suggesting they need to plan production for that item.
+        8. **Document Analysis:** When the user asks you to analyze an uploaded document (e.g. from Document Center), read the provided text content carefully. Extract key insights, summarize the data, and if it's a table/CSV, try to find patterns or anomalies. Relate the document's content to the factory's current state (inventory, machines, jobs) if applicable.
 
         **DATA INTERPRETATION:**
         - \`actualProduced\` = Current output so far.
         - \`totalTarget\` = The goal.
         - Negative numbers in reports often mean "Stock Deficit" (Owe customers), but in Inventory reports, dashes '-' usually mean 0. Use context.
 
+        **APP CAPABILITIES AND NAVIGATION (YOUR AWARENESS OF THE WEB APP):**
+        You are aware of every feature, menu, and button in this web application. If the user asks how to do something, you must guide them or use the \`navigateApp\` tool to take them there.
+        Here are the main sections of the app:
+        - **dashboard**: ภาพรวม (Overview) - Shows KPIs, machine status, and recent activities.
+        - **plan**: แผนการผลิต (Production Plan) - Manage active and upcoming jobs.
+        - **completed-plan**: ประวัติการผลิตที่เสร็จสิ้น (Completed Jobs) - View finished jobs.
+        - **analysis**: วิเคราะห์การผลิต (Production Analysis) - Charts and metrics.
+        - **schedule**: ตารางไทม์ไลน์ (Timeline) - Gantt chart view of production.
+        - **list**: รายการงานทั้งหมด (Job List) - Table view of all jobs.
+        - **inventory**: สินค้าคงเหลือ (FG) & วัตถุดิบ - Manage stock levels.
+        - **history**: ประวัติการทำงาน (History Log) - Audit trail of actions.
+        - **daily-downtime**: รายงานสรุปเครื่องจอดรายวัน (Daily Downtime) - Log and view machine downtime.
+        - **daily-report**: รายงานประจำวัน (AI Daily Report) - Generate and view AI-powered daily production reports.
+        - **tag-print**: พิมพ์สติกเกอร์ (Print Tags) - Print product tags.
+        - **form-templates**: แบบฟอร์มเอกสาร (Form Templates) - Manage custom document templates.
+        - **master-data**: ฐานข้อมูลหลัก (Master Data) - Manage products, BOMs, and machine capabilities.
+        - **excel-sync**: นำเข้า/ส่งออกข้อมูล (Excel Sync) - Import and export all data via Excel.
+        - **ai-knowledge**: คลังความรู้ AI (AI Knowledge Base) - Manage custom rules and facts for the AI.
+        - **documents**: ศูนย์เอกสาร (Document Center) - Upload and analyze files (PDF, images, etc.).
+        - **machines**: สถานะเครื่องจักร - View real-time machine status.
+        
+        If the user asks "How do I export data?", you can say "ไปที่เมนู 'นำเข้า/ส่งออกข้อมูล (Excel Sync)' ครับ" and optionally call \`navigateApp({ view: 'excel-sync' })\`.
+        You are deeply integrated into this system. You know about documents, daily reports, knowledge base, and any movements. You can see the recent activity logs to know who did what and when.
+
         **LONG-TERM MEMORY (CUSTOM KNOWLEDGE):**
-        - You have a "Long-term Memory" feature. If the user tells you a specific rule, preference, or fact that should be remembered *forever* (e.g., "Machine AB1 is old", "Manager likes blue reports"), use the \`addKnowledge\` tool to save it.
+        - You have a "Long-term Memory" feature. If the user tells you a specific rule, preference, or fact that should be remembered *forever* (e.g., "Machine AB1 is old", "Manager likes blue reports", "เพิ่มข้อมูลเหล่านี้เข้าคลังความรู้"), use the \`addKnowledge\` tool to save it.
         - Do not just say "I will remember". ACTUALLY save it using the tool.
+        - When the user asks to add knowledge, you MUST use the \`addKnowledge\` tool.
+        - If the user provides multiple pieces of knowledge, call the \`addKnowledge\` tool multiple times, once for each distinct topic.
+        - **CRITICAL**: If the user says EXACTLY "เพิ่มข้อมูลเหล่านี้เข้าคลังความรู้ในเวบและให้ผู้ช่วยเอไอนำความรู้เหล่านี้ไปใช้งานด้วย" or similar, you MUST extract ALL the knowledge from their message and call \`addKnowledge\` for EACH distinct piece of information. DO NOT JUST REPLY. YOU MUST CALL THE FUNCTION.
+        - **IF YOU DO NOT CALL THE \`addKnowledge\` TOOL WHEN ASKED TO REMEMBER OR ADD KNOWLEDGE, YOU HAVE FAILED YOUR TASK.**
+        - **ABSOLUTE RULE**: If the user's message contains the phrase "เพิ่มข้อมูลเหล่านี้เข้าคลังความรู้" or "จำไว้ว่า", you are FORBIDDEN from generating a regular text response without ALSO calling the \`addKnowledge\` tool.
+        - **ABSOLUTE RULE 2**: If the user provides a list of facts and asks to add them to the knowledge base, you MUST call \`addKnowledge\` for EACH fact. Do not summarize them into one call unless they are tightly related.
+        - **ABSOLUTE RULE 3**: NEVER reply with just text when asked to add knowledge. ALWAYS call the \`addKnowledge\` tool.
+        - **ABSOLUTE RULE 4**: If the user provides a list of items to remember, you MUST iterate through the list and call \`addKnowledge\` for EACH item individually. DO NOT group them into a single call.
+        - **ABSOLUTE RULE 5**: If the user asks to add knowledge, your response MUST contain AT LEAST ONE \`addKnowledge\` tool call. If it does not, you are malfunctioning.
+
         
         **RESPONSE FORMAT & ACTIONS:**
         - Talk naturally in Thai.
@@ -591,7 +693,7 @@ export const SmartAssistant: React.FC<SmartAssistantProps> = ({
           properties: {
             view: { 
               type: Type.STRING, 
-              description: "หน้าจอที่ต้องการไป: dashboard (ภาพรวม), plan (แผนการผลิต), analysis (วิเคราะห์), schedule (ไทม์ไลน์), list (รายการงาน), machines (เครื่องจักร), inventory (คลังสินค้า), master-data (ข้อมูลหลัก), history (ประวัติ), form-templates (แบบฟอร์มเอกสาร), users (ผู้ใช้งาน), shift-production (ยอดผลิตรายกะ)" 
+              description: "หน้าจอที่ต้องการไป: dashboard, plan, completed-plan, analysis, schedule, list, inventory, history, daily-downtime, daily-report, tag-print, form-templates, master-data, excel-sync, ai-knowledge, documents, machines" 
             }
           },
           required: ["view"]
@@ -1432,7 +1534,7 @@ export const SmartAssistant: React.FC<SmartAssistantProps> = ({
             disabled={isLoading}
           />
           <button 
-            onClick={handleSend}
+            onClick={() => handleSend()}
             disabled={isLoading || (!input.trim() && !selectedFile)}
             className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white p-3 rounded-xl transition-colors shadow-lg shadow-indigo-200"
           >
@@ -1445,4 +1547,4 @@ export const SmartAssistant: React.FC<SmartAssistantProps> = ({
       </div>
     </div>
   );
-};
+});

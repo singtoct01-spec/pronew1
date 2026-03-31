@@ -13,13 +13,14 @@ import { MachineGrid } from './components/MachineGrid';
 import { ProductionPlan } from './components/ProductionPlan';
 import { ProductionPlanPrint } from './components/ProductionPlanPrint';
 import { EditJobModal } from './components/EditJobModal';
-import { SmartAssistant } from './components/SmartAssistant';
+import { SmartAssistant, SmartAssistantHandle } from './components/SmartAssistant';
 import { ProductionOrderPrint } from './components/ProductionOrderPrint';
 import { DocumentHandoverView } from './components/DocumentHandoverView';
 import { ProductTagView } from './components/ProductTagView';
 import { InventoryView } from './components/InventoryView';
 import { HistoryLog } from './components/HistoryLog';
 import { KnowledgeBase } from './components/KnowledgeBase';
+import { ExcelSyncView } from './components/ExcelSyncView';
 import { ProductionAnalysis } from './components/ProductionAnalysis';
 import { CompletedProductionView } from './components/CompletedProductionView';
 import { OEEDashboard } from './components/OEEDashboard';
@@ -27,18 +28,20 @@ import { CustomFormView } from './components/CustomFormView';
 import { FormTemplatesView } from './components/FormTemplatesView';
 import { DowntimeLogsView } from './components/DowntimeLogsView';
 import { DailyDowntimeReport } from './components/DailyDowntimeReport';
+import { DailyReportGenerator } from './components/DailyReportGenerator';
 import { ShiftProductionView } from './components/ShiftProductionView';
 import { GoogleSheetsImportModal } from './components/GoogleSheetsImportModal';
 import { PlanVsActualDashboard } from './components/PlanVsActualDashboard';
 import { Login } from './components/Login';
 import { UserManagement } from './components/UserManagement';
-import { ProductionJob, MOCK_INVENTORY, MOCK_BOMS, PRODUCT_SPECS, MACHINE_MOLD_CAPABILITIES, AuditLog, AiMessage, FormTemplate, DowntimeLog, CustomKnowledge, InventoryItem, ProductBOM, AppUser, ShiftProductionLog } from './types';
-import { Menu, Sparkles, Bell, Plus, BarChart3, Calendar, Clock, FileText, Cpu, Package, Settings, History, X, LogOut, Users, BrainCircuit, CheckCircle2, AlertOctagon } from 'lucide-react';
+import { ProductionJob, MOCK_INVENTORY, MOCK_BOMS, PRODUCT_SPECS, MACHINE_MOLD_CAPABILITIES, AuditLog, AiMessage, FormTemplate, DowntimeLog, CustomKnowledge, InventoryItem, ProductBOM, AppUser, ShiftProductionLog, DailyReportLog, Status, DatePeriod } from './types';
+import { Menu, Sparkles, Bell, Plus, BarChart3, Calendar, Clock, FileText, Cpu, Package, Settings, History, X, LogOut, Users, BrainCircuit, CheckCircle2, AlertOctagon, TrendingUp, Activity, ClipboardList } from 'lucide-react';
 
 import { AiKnowledgeBase } from './components/AiKnowledgeBase';
-import { formatDateTime, formatTimeOnly } from './utils/dateUtils';
+import { DocumentCenter } from './components/DocumentCenter';
+import { formatDateTime, formatTimeOnly, getDateRangeForPeriod } from './utils/dateUtils';
 
-export type ViewState = 'dashboard' | 'plan' | 'completed-plan' | 'analysis' | 'schedule' | 'list' | 'machines' | 'inventory' | 'master-data' | 'ai-knowledge' | 'history' | 'order-detail' | 'handover' | 'tag-print' | 'custom-form' | 'form-templates' | 'plan-print' | 'plan-vs-actual' | 'users' | 'downtime-logs' | 'daily-downtime';
+export type ViewState = 'dashboard' | 'plan' | 'completed-plan' | 'analysis' | 'schedule' | 'list' | 'machines' | 'inventory' | 'master-data' | 'excel-sync' | 'ai-knowledge' | 'documents' | 'history' | 'order-detail' | 'handover' | 'tag-print' | 'custom-form' | 'form-templates' | 'plan-print' | 'plan-vs-actual' | 'users' | 'downtime-logs' | 'daily-downtime' | 'daily-report';
 
 const App: React.FC = () => {
   const location = useLocation();
@@ -46,9 +49,68 @@ const App: React.FC = () => {
   const currentView = location.pathname.substring(1) || 'dashboard';
   // const [currentView, setCurrentView] = useState('dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [selectedPeriod, setSelectedPeriod] = useState<DatePeriod>('all');
   
   // Authentication State
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+
+  const menuCategories = [
+    {
+      title: 'ภาพรวม & แดชบอร์ด',
+      items: [
+        { id: 'dashboard', label: 'ภาพรวม (Overview)', icon: <BarChart3 size={20} /> },
+        { id: 'analysis', label: 'วิเคราะห์การผลิต', icon: <TrendingUp size={20} /> },
+        { id: 'oee', label: 'OEE Dashboard', icon: <Activity size={20} /> },
+      ]
+    },
+    {
+      title: 'แผนและการผลิต',
+      items: [
+        { id: 'plan', label: 'แผนการผลิต', icon: <Calendar size={20} /> },
+        { id: 'schedule', label: 'ไทม์ไลน์ (Timeline)', icon: <Clock size={20} /> },
+        { id: 'list', label: 'รายการงานทั้งหมด', icon: <FileText size={20} /> },
+        { id: 'import-plan', label: 'นำเข้าแผนผลิต (Excel)', icon: <FileText size={20} /> },
+        { id: 'plan-vs-actual', label: 'ติดตามยอดผลิตรายชั่วโมง', icon: <Clock size={20} /> },
+        { id: 'shift-production', label: 'บันทึกยอดผลิตรายกะ', icon: <ClipboardList size={20} /> },
+        { id: 'completed-plan', label: 'ประวัติงานที่เสร็จ', icon: <CheckCircle2 size={20} /> },
+      ]
+    },
+    {
+      title: 'เครื่องจักร & ซ่อมบำรุง',
+      items: [
+        { id: 'machines', label: 'สถานะเครื่องจักร', icon: <Cpu size={20} /> },
+        { id: 'downtime-logs', label: 'บันทึกเครื่องจักรขัดข้อง', icon: <AlertOctagon size={20} /> },
+        { id: 'daily-downtime', label: 'รายงานเครื่องจอดรายวัน', icon: <AlertOctagon size={20} /> },
+      ]
+    },
+    {
+      title: 'คลังสินค้า & ข้อมูลหลัก',
+      items: [
+        { id: 'inventory', label: 'สินค้าคงเหลือ (FG) & วัตถุดิบ', icon: <Package size={20} /> },
+        { id: 'master-data', label: 'ฐานข้อมูลหลัก (Master)', icon: <Settings size={20} /> },
+        { id: 'excel-sync', label: 'นำเข้า/ส่งออก (Excel)', icon: <FileText size={20} /> },
+      ]
+    },
+    {
+      title: 'เอกสาร & รายงาน',
+      items: [
+        { id: 'documents', label: 'ศูนย์เอกสาร', icon: <FileText size={20} /> },
+        { id: 'form-templates', label: 'แบบฟอร์มเอกสาร', icon: <FileText size={20} /> },
+        { id: 'daily-report', label: 'รายงานประจำวัน (AI)', icon: <FileText size={20} /> },
+      ]
+    },
+    {
+      title: 'ระบบ & AI',
+      items: [
+        { id: 'ai-knowledge', label: 'คลังความรู้ AI', icon: <BrainCircuit size={20} /> },
+        { id: 'history', label: 'ประวัติการทำงาน', icon: <History size={20} /> },
+      ]
+    }
+  ];
+
+  if (currentUser?.role === 'admin') {
+    menuCategories[5].items.push({ id: 'users', label: 'จัดการผู้ใช้งาน', icon: <Users size={20} /> });
+  }
 
   // State for data management
   const [jobs, setJobs] = useState<ProductionJob[]>([]);
@@ -116,6 +178,28 @@ const App: React.FC = () => {
       setShiftProductionLogs(shiftData);
     }, (error) => {
       console.error("Error fetching shift production logs from Firebase:", error);
+    });
+
+    const unsubscribeDailyReports = onSnapshot(collection(db, 'dailyReports'), (snapshot) => {
+      const reportsData: DailyReportLog[] = [];
+      snapshot.forEach((doc) => {
+        reportsData.push(doc.data() as DailyReportLog);
+      });
+      reportsData.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setDailyReports(reportsData);
+    }, (error) => {
+      console.error("Error fetching daily reports from Firebase:", error);
+    });
+
+    const unsubscribeDocuments = onSnapshot(collection(db, 'documents'), (snapshot) => {
+      const docsData: any[] = [];
+      snapshot.forEach((doc) => {
+        docsData.push({ id: doc.id, ...doc.data() });
+      });
+      docsData.sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
+      setDocuments(docsData);
+    }, (error) => {
+      console.error("Error fetching documents from Firebase:", error);
     });
 
     const unsubscribeCustomKnowledge = onSnapshot(collection(db, 'customKnowledge'), (snapshot) => {
@@ -198,6 +282,8 @@ const App: React.FC = () => {
       unsubscribeForms();
       unsubscribeDowntimeLogs();
       unsubscribeShiftProductionLogs();
+      unsubscribeDailyReports();
+      unsubscribeDocuments();
       unsubscribeCustomKnowledge();
       unsubscribeInventory();
       unsubscribeBoms();
@@ -217,6 +303,8 @@ const App: React.FC = () => {
   const [formTemplates, setFormTemplates] = useState<FormTemplate[]>([]);
   const [downtimeLogs, setDowntimeLogs] = useState<DowntimeLog[]>([]);
   const [shiftProductionLogs, setShiftProductionLogs] = useState<ShiftProductionLog[]>([]);
+  const [dailyReports, setDailyReports] = useState<DailyReportLog[]>([]);
+  const [documents, setDocuments] = useState<any[]>([]);
   const [customKnowledge, setCustomKnowledge] = useState<CustomKnowledge[]>([]);
   
   const [aiMessages, setAiMessages] = useState<AiMessage[]>([
@@ -228,6 +316,49 @@ const App: React.FC = () => {
   ]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const savedCountRef = useRef(1); // Start at 1 because of the initial message
+  const assistantRef = useRef<SmartAssistantHandle>(null);
+
+  // Filtered Data based on selectedPeriod
+  const { filteredJobs, filteredDowntimeLogs, filteredShiftLogs, filteredDailyReports } = React.useMemo(() => {
+    if (selectedPeriod === 'all') {
+      return {
+        filteredJobs: jobs,
+        filteredDowntimeLogs: downtimeLogs,
+        filteredShiftLogs: shiftProductionLogs,
+        filteredDailyReports: dailyReports
+      };
+    }
+
+    const { start, end } = getDateRangeForPeriod(selectedPeriod);
+    if (!start || !end) {
+      return {
+        filteredJobs: jobs,
+        filteredDowntimeLogs: downtimeLogs,
+        filteredShiftLogs: shiftProductionLogs,
+        filteredDailyReports: dailyReports
+      };
+    }
+
+    const startMs = start.getTime();
+    const endMs = end.getTime();
+
+    const isDateInRange = (dateStr: string) => {
+      const ms = new Date(dateStr).getTime();
+      return ms >= startMs && ms <= endMs;
+    };
+
+    return {
+      filteredJobs: jobs.filter(job => {
+        const jobStart = new Date(job.startDate).getTime();
+        const jobEnd = new Date(job.endDate).getTime();
+        // Job overlaps with the period if its start is before the period end AND its end is after the period start
+        return jobStart <= endMs && jobEnd >= startMs;
+      }),
+      filteredDowntimeLogs: downtimeLogs.filter(log => isDateInRange(log.date)),
+      filteredShiftLogs: shiftProductionLogs.filter(log => isDateInRange(log.date)),
+      filteredDailyReports: dailyReports.filter(report => isDateInRange(report.date))
+    };
+  }, [jobs, downtimeLogs, shiftProductionLogs, dailyReports, selectedPeriod]);
 
   // Temporary cleanup script for duplicate downtime logs
   useEffect(() => {
@@ -330,12 +461,9 @@ const App: React.FC = () => {
           const msg = newMessages[i];
           const globalIndex = savedCountRef.current + i;
           try {
-            // Sanitize message to remove undefined values
-            const sanitizedMsg = { ...msg };
-            if (sanitizedMsg.image === undefined) delete sanitizedMsg.image;
-            if (sanitizedMsg.actionProposal === undefined) delete sanitizedMsg.actionProposal;
-            if (sanitizedMsg.pendingFunctionCalls === undefined) delete sanitizedMsg.pendingFunctionCalls;
-            if (sanitizedMsg.verifiedAction === undefined) delete sanitizedMsg.verifiedAction;
+            // Sanitize message to remove undefined values deeply
+            const sanitizedMsg = JSON.parse(JSON.stringify(msg));
+            delete sanitizedMsg.id;
             
             const docRef = await addDoc(collection(db, 'chat_history'), sanitizedMsg);
             updatedMessages[globalIndex] = { ...msg, id: docRef.id };
@@ -358,11 +486,8 @@ const App: React.FC = () => {
   const handleUpdateAiMessage = async (updatedMessage: AiMessage) => {
     if (updatedMessage.id) {
       try {
-        const sanitizedMsg: any = { ...updatedMessage };
-        if (sanitizedMsg.image === undefined) sanitizedMsg.image = deleteField();
-        if (sanitizedMsg.actionProposal === undefined) sanitizedMsg.actionProposal = deleteField();
-        if (sanitizedMsg.pendingFunctionCalls === undefined) sanitizedMsg.pendingFunctionCalls = deleteField();
-        if (sanitizedMsg.verifiedAction === undefined) sanitizedMsg.verifiedAction = deleteField();
+        const sanitizedMsg = JSON.parse(JSON.stringify(updatedMessage));
+        delete sanitizedMsg.id;
         
         await updateDoc(doc(db, 'chat_history', updatedMessage.id), sanitizedMsg);
       } catch (error) {
@@ -524,9 +649,19 @@ const App: React.FC = () => {
       const newJobs = jobs.map(j => j.id === sanitizedJob.id ? sanitizedJob : j);
       if (!jobs.find(j => j.id === sanitizedJob.id)) newJobs.push(sanitizedJob);
       addLog('UPDATE', `แก้ไขงาน ${sanitizedJob.jobOrder} (${sanitizedJob.productItem}) - สถานะ: ${sanitizedJob.status}`, sanitizedJob.id, newJobs);
+      
+      // Notify assistant
+      if (assistantRef.current) {
+        assistantRef.current.notifyEvent(`ผู้ใช้งานได้อัปเดตข้อมูลรายการผลิต ${sanitizedJob.jobOrder} สำหรับเครื่อง ${sanitizedJob.machineId}`);
+      }
     } catch (error) {
       console.error("Error saving job to Firebase:", error);
     }
+  };
+
+  const handleRevertJob = async (job: ProductionJob) => {
+    const updatedJob = { ...job, status: 'Running' as Status };
+    await handleSaveJob(updatedJob);
   };
 
   const handleUpdateActuals = async (jobId: string, actuals: number, reason?: string) => {
@@ -581,6 +716,11 @@ const App: React.FC = () => {
       }
 
       addLog('UPDATE', `อัปเดตยอดผลิตงาน ${sanitizedJob.jobOrder} เพิ่ม ${actuals} ชิ้น${reason ? ` (${reason})` : ''} (ตัดสต็อกอัตโนมัติ)`, sanitizedJob.id, newJobs);
+      
+      // Notify assistant
+      if (assistantRef.current) {
+        assistantRef.current.notifyEvent(`ผู้ใช้งานได้อัปเดตยอดผลิตของงาน ${sanitizedJob.jobOrder} เพิ่มขึ้น ${actuals} ชิ้น (รวมเป็น ${sanitizedJob.actualProduction || 0} ชิ้น)`);
+      }
     } catch (error) {
       console.error("Error updating actuals in Firebase:", error);
     }
@@ -592,6 +732,11 @@ const App: React.FC = () => {
       await setDoc(doc(db, 'jobs', sanitizedJob.id), sanitizedJob);
       const newJobs = [...jobs, sanitizedJob];
       addLog('CREATE', `สร้างงานผลิตใหม่ ${sanitizedJob.jobOrder} เครื่อง ${sanitizedJob.machineId}`, sanitizedJob.id, newJobs);
+      
+      // Notify assistant
+      if (assistantRef.current) {
+        assistantRef.current.notifyEvent(`ผู้ใช้งานได้สร้างรายการผลิตใหม่ ${sanitizedJob.jobOrder} สำหรับเครื่อง ${sanitizedJob.machineId}`);
+      }
     } catch (error) {
       console.error("Error creating job in Firebase:", error);
     }
@@ -605,6 +750,11 @@ const App: React.FC = () => {
       await deleteDoc(doc(db, 'jobs', jobId));
       const newJobs = jobs.filter(j => j.id !== jobId);
       addLog('DELETE', `ลบงานผลิต ${jobToDelete.jobOrder}`, jobId, newJobs);
+      
+      // Notify assistant
+      if (assistantRef.current) {
+        assistantRef.current.notifyEvent(`ผู้ใช้งานได้ลบรายการผลิต ${jobToDelete.jobOrder} ออกจากระบบ`);
+      }
     } catch (error) {
       console.error("Error deleting job in Firebase:", error);
     }
@@ -645,6 +795,11 @@ const App: React.FC = () => {
 
       if (successCount > 0) {
         addLog('CREATE', `นำเข้าข้อมูล/อัปเดตงานผลิตจำนวน ${successCount} รายการ`, undefined, newJobs);
+        
+        // Notify assistant
+        if (assistantRef.current) {
+          assistantRef.current.notifyEvent(`ผู้ใช้งานได้อัปเดต/สร้างแผนการผลิตแบบกลุ่มจำนวน ${successCount} รายการ`);
+        }
       }
       return true;
     } catch (error) {
@@ -697,6 +852,11 @@ const App: React.FC = () => {
       const sanitizedLog = JSON.parse(JSON.stringify(newLog));
       await setDoc(doc(db, 'downtimeLogs', sanitizedLog.id), sanitizedLog);
       addLog('CREATE', `บันทึกเครื่องจักรขัดข้อง: ${sanitizedLog.machineId} (${sanitizedLog.reason})`, sanitizedLog.id);
+      
+      // Notify assistant
+      if (assistantRef.current) {
+        assistantRef.current.notifyEvent(`ผู้ใช้งานได้บันทึกเครื่องจักรขัดข้อง: เครื่อง ${sanitizedLog.machineId} สาเหตุ: ${sanitizedLog.reason} ใช้เวลา ${sanitizedLog.durationMinutes} นาที`);
+      }
     } catch (error) {
       console.error("Error saving downtime log:", error);
     }
@@ -712,6 +872,11 @@ const App: React.FC = () => {
       const sanitizedLog = JSON.parse(JSON.stringify(newLog));
       await setDoc(doc(db, 'shiftProductionLogs', sanitizedLog.id), sanitizedLog);
       addLog('CREATE', `บันทึกยอดผลิตกะ ${sanitizedLog.shift}: ${sanitizedLog.machineId} (${sanitizedLog.actual}/${sanitizedLog.target})`, sanitizedLog.id);
+      
+      // Notify assistant
+      if (assistantRef.current) {
+        assistantRef.current.notifyEvent(`ผู้ใช้งานได้บันทึกยอดผลิตกะ ${sanitizedLog.shift} สำหรับเครื่อง ${sanitizedLog.machineId} (ทำได้ ${sanitizedLog.actual} / เป้าหมาย ${sanitizedLog.target})`);
+      }
     } catch (error) {
       console.error("Error saving shift production log:", error);
       alert('เกิดข้อผิดพลาดในการบันทึกข้อมูล');
@@ -721,10 +886,54 @@ const App: React.FC = () => {
   const handleDeleteDowntimeLog = async (logId: string) => {
     if (window.confirm('คุณแน่ใจหรือไม่ว่าต้องการลบบันทึกเครื่องจักรขัดข้องนี้?')) {
       try {
+        const logToDelete = downtimeLogs.find(l => l.id === logId);
         await deleteDoc(doc(db, 'downtimeLogs', logId));
+        
+        // Notify assistant
+        if (assistantRef.current && logToDelete) {
+          assistantRef.current.notifyEvent(`ผู้ใช้งานได้ลบบันทึกเครื่องจักรขัดข้องของเครื่อง ${logToDelete.machineId} ออกจากระบบ`);
+        }
       } catch (error) {
         console.error("Error deleting downtime log:", error);
         alert('เกิดข้อผิดพลาดในการลบข้อมูล');
+      }
+    }
+  };
+
+  const handleSaveDailyReport = async (rawText: string, generatedReport: string) => {
+    if (!currentUser) return;
+    try {
+      const newReport: DailyReportLog = {
+        id: `dr-${Date.now()}`,
+        date: new Date().toISOString(),
+        rawText,
+        generatedReport,
+        createdBy: currentUser.username
+      };
+      await setDoc(doc(db, 'dailyReports', newReport.id), newReport);
+      
+      // Notify assistant
+      if (assistantRef.current) {
+        assistantRef.current.notifyEvent(`ผู้ใช้งานได้บันทึกรายงานประจำวันใหม่ (ID: ${newReport.id})`);
+      }
+    } catch (error) {
+      console.error("Error saving daily report:", error);
+      alert("เกิดข้อผิดพลาดในการบันทึกรายงาน");
+    }
+  };
+
+  const handleDeleteDailyReport = async (id: string) => {
+    if (window.confirm('คุณแน่ใจหรือไม่ว่าต้องการลบรายงานนี้?')) {
+      try {
+        await deleteDoc(doc(db, 'dailyReports', id));
+        
+        // Notify assistant
+        if (assistantRef.current) {
+          assistantRef.current.notifyEvent(`ผู้ใช้งานได้ลบรายงานประจำวัน (ID: ${id})`);
+        }
+      } catch (error) {
+        console.error("Error deleting daily report:", error);
+        alert("เกิดข้อผิดพลาดในการลบรายงาน");
       }
     }
   };
@@ -858,6 +1067,11 @@ const App: React.FC = () => {
       }
       
       alert(`นำเข้า/อัปเดตข้อมูลสำเร็จ ${allOps.length} รายการ`);
+      
+      // Notify assistant
+      if (assistantRef.current) {
+        assistantRef.current.notifyEvent(`ผู้ใช้งานได้นำเข้า/อัปเดตข้อมูลแผนผลิตจำนวน ${allOps.length} รายการ (เพิ่มใหม่ ${jobsToAdd.length}, อัปเดต ${jobsToUpdate.length})`);
+      }
     } catch (error) {
       console.error("Error importing jobs:", error);
       alert("เกิดข้อผิดพลาดในการนำเข้าข้อมูล");
@@ -895,6 +1109,11 @@ const App: React.FC = () => {
       }
       
       alert(`นำเข้าข้อมูลสำเร็จ ${importedItems.length} รายการ`);
+      
+      // Notify assistant
+      if (assistantRef.current) {
+        assistantRef.current.notifyEvent(`ผู้ใช้งานได้นำเข้าข้อมูลสินค้าคงคลังจำนวน ${importedItems.length} รายการ`);
+      }
     } catch (error) {
       console.error("Error importing inventory:", error);
       alert("เกิดข้อผิดพลาดในการนำเข้าข้อมูล: " + (error as Error).message);
@@ -915,6 +1134,11 @@ const App: React.FC = () => {
         details: `เพิ่มรหัส ${item.code} - ${item.name}`,
         user: 'System Admin'
       });
+      
+      // Notify assistant
+      if (assistantRef.current) {
+        assistantRef.current.notifyEvent(`ผู้ใช้งานได้เพิ่มรายการสินค้าคงคลังใหม่: ${item.code} - ${item.name}`);
+      }
     } catch (error) {
       console.error("Error adding inventory:", error);
       alert("เกิดข้อผิดพลาดในการเพิ่มข้อมูล");
@@ -934,6 +1158,11 @@ const App: React.FC = () => {
         details: `แก้ไขรหัส ${item.code}`,
         user: 'System Admin'
       });
+      
+      // Notify assistant
+      if (assistantRef.current) {
+        assistantRef.current.notifyEvent(`ผู้ใช้งานได้แก้ไขรายการสินค้าคงคลัง: ${item.code}`);
+      }
     } catch (error) {
       console.error("Error updating inventory:", error);
       alert("เกิดข้อผิดพลาดในการแก้ไขข้อมูล");
@@ -951,6 +1180,11 @@ const App: React.FC = () => {
         details: `ลบรายการ ID: ${id}`,
         user: 'System Admin'
       });
+      
+      // Notify assistant
+      if (assistantRef.current) {
+        assistantRef.current.notifyEvent(`ผู้ใช้งานได้ลบรายการสินค้าคงคลัง ID: ${id}`);
+      }
     } catch (error) {
       console.error("Error deleting inventory:", error);
       alert("เกิดข้อผิดพลาดในการลบข้อมูล");
@@ -971,6 +1205,11 @@ const App: React.FC = () => {
         details: `เพิ่มสูตรสำหรับ ${bom.productItem}`,
         user: 'System Admin'
       });
+      
+      // Notify assistant
+      if (assistantRef.current) {
+        assistantRef.current.notifyEvent(`ผู้ใช้งานได้เพิ่มสูตรการผลิต (BOM) สำหรับ ${bom.productItem}`);
+      }
     } catch (error) {
       console.error("Error adding BOM:", error);
       alert("เกิดข้อผิดพลาดในการเพิ่มสูตรการผลิต");
@@ -991,6 +1230,11 @@ const App: React.FC = () => {
         details: `แก้ไขสูตรสำหรับ ${bom.productItem}`,
         user: 'System Admin'
       });
+      
+      // Notify assistant
+      if (assistantRef.current) {
+        assistantRef.current.notifyEvent(`ผู้ใช้งานได้แก้ไขสูตรการผลิต (BOM) สำหรับ ${bom.productItem}`);
+      }
     } catch (error) {
       console.error("Error updating BOM:", error);
       alert("เกิดข้อผิดพลาดในการแก้ไขสูตรการผลิต");
@@ -1008,6 +1252,11 @@ const App: React.FC = () => {
         details: `ลบสูตร ID: ${id}`,
         user: 'System Admin'
       });
+      
+      // Notify assistant
+      if (assistantRef.current) {
+        assistantRef.current.notifyEvent(`ผู้ใช้งานได้ลบสูตรการผลิต (BOM) ID: ${id}`);
+      }
     } catch (error) {
       console.error("Error deleting BOM:", error);
       alert("เกิดข้อผิดพลาดในการลบสูตรการผลิต");
@@ -1038,7 +1287,13 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 flex font-kanit">
-      <Sidebar currentView={currentView} onChangeView={handleViewChange} currentUser={currentUser} />
+      <Sidebar 
+        currentView={currentView} 
+        onChangeView={handleViewChange} 
+        currentUser={currentUser} 
+        selectedPeriod={selectedPeriod}
+        onPeriodChange={setSelectedPeriod}
+      />
 
       {/* Mobile Header */}
       <div className="md:hidden fixed top-0 w-full bg-slate-900 text-white z-40 p-4 flex justify-between items-center shadow-md">
@@ -1094,32 +1349,23 @@ const App: React.FC = () => {
                         <X size={20} />
                     </button>
                 </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-1">
-                    {[
-                        { id: 'dashboard', label: 'ภาพรวม', icon: <BarChart3 size={20} /> },
-                        { id: 'plan', label: 'แผนการผลิต', icon: <Calendar size={20} /> },
-                        { id: 'completed-plan', label: 'ประวัติงานที่เสร็จ', icon: <CheckCircle2 size={20} /> },
-                        { id: 'import-plan', label: 'นำเข้าแผนผลิต (Excel)', icon: <FileText size={20} /> },
-                        { id: 'schedule', label: 'ไทม์ไลน์', icon: <Clock size={20} /> },
-                        { id: 'list', label: 'รายการงานทั้งหมด', icon: <FileText size={20} /> },
-                        { id: 'daily-downtime', label: 'รายงานเครื่องจอดรายวัน', icon: <AlertOctagon size={20} /> },
-                        { id: 'machines', label: 'สถานะเครื่องจักร', icon: <Cpu size={20} /> },
-                        { id: 'inventory', label: 'สินค้าคงเหลือ (FG) & วัตถุดิบ', icon: <Package size={20} /> },
-                        { id: 'master-data', label: 'ฐานข้อมูลหลัก', icon: <Settings size={20} /> },
-                        { id: 'ai-knowledge', label: 'คลังความรู้ AI', icon: <BrainCircuit size={20} /> },
-                        { id: 'form-templates', label: 'แบบฟอร์มเอกสาร', icon: <FileText size={20} /> },
-                        { id: 'history', label: 'ประวัติการทำงาน', icon: <History size={20} /> },
-                    ]
-                    .concat(currentUser.role === 'admin' ? [{ id: 'users', label: 'จัดการผู้ใช้งาน', icon: <Users size={20} /> }] as any[] : [])
-                    .map(item => (
-                        <button 
-                            key={item.id}
-                            onClick={() => { handleViewChange(item.id); setMobileMenuOpen(false); }} 
-                            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-colors font-medium ${currentView === item.id ? 'bg-brand-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}
-                        >
-                            {item.icon}
-                            {item.label}
-                        </button>
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {menuCategories.map((category, idx) => (
+                        <div key={idx} className="space-y-1">
+                            <h3 className="px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                                {category.title}
+                            </h3>
+                            {category.items.map(item => (
+                                <button 
+                                    key={item.id}
+                                    onClick={() => { handleViewChange(item.id); setMobileMenuOpen(false); }} 
+                                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-colors font-medium ${currentView === item.id ? 'bg-brand-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}
+                                >
+                                    {item.icon}
+                                    {item.label}
+                                </button>
+                            ))}
+                        </div>
                     ))}
                 </div>
             </div>
@@ -1173,11 +1419,14 @@ const App: React.FC = () => {
                      currentView === 'inventory' ? 'สินค้าคงเหลือ (FG) & วัตถุดิบ' :
                      currentView === 'history' ? 'ประวัติการทำงาน (History Log)' :
                      currentView === 'daily-downtime' ? 'รายงานสรุปเครื่องจอดรายวัน (Daily Downtime)' :
+                     currentView === 'daily-report' ? 'รายงานประจำวัน (AI Daily Report)' :
                      currentView === 'tag-print' ? 'พิมพ์สติกเกอร์ (Print Tags)' :
                      currentView === 'custom-form' ? customForm?.title || 'เอกสาร' :
                      currentView === 'form-templates' ? 'แบบฟอร์มเอกสาร (Form Templates)' :
                      currentView === 'master-data' ? 'ฐานข้อมูลหลัก (Master Data)' :
+                     currentView === 'excel-sync' ? 'นำเข้า/ส่งออกข้อมูล (Excel Sync)' :
                      currentView === 'ai-knowledge' ? 'คลังความรู้ AI (AI Knowledge Base)' :
+                     currentView === 'documents' ? 'ศูนย์เอกสาร (Document Center)' :
                      currentView === 'machines' ? 'สถานะเครื่องจักร' : 
                      currentView === 'users' ? 'จัดการผู้ใช้งาน' : 'ตั้งค่า'}
                 </h1>
@@ -1215,17 +1464,17 @@ const App: React.FC = () => {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={
             <div className="space-y-6">
-              <DashboardStats data={jobs} downtimeLogs={downtimeLogs} shiftProductionLogs={shiftProductionLogs} />
+              <DashboardStats data={filteredJobs} downtimeLogs={filteredDowntimeLogs} shiftProductionLogs={filteredShiftLogs} />
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   <div className="lg:col-span-2">
-                      <TimelineView jobs={jobs} onUpdateJob={handleSaveJob} />
+                      <TimelineView jobs={filteredJobs} onUpdateJob={handleSaveJob} />
                   </div>
                   <div className="lg:col-span-1">
                        <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-200 h-full">
                           <h3 className="font-bold text-slate-800 mb-4 font-kanit">แจ้งเตือนงานด่วน (Urgent)</h3>
                           <div className="space-y-3 max-h-[400px] overflow-y-auto">
-                              {jobs.filter(j => j.status === 'Delayed').length > 0 ? (
-                                  jobs.filter(j => j.status === 'Delayed').map(job => (
+                              {filteredJobs.filter(j => j.status === 'Delayed').length > 0 ? (
+                                  filteredJobs.filter(j => j.status === 'Delayed').map(job => (
                                       <div 
                                           key={job.id} 
                                           className="p-3 bg-red-50 border border-red-100 rounded-lg cursor-pointer hover:bg-red-100 transition-colors"
@@ -1250,14 +1499,14 @@ const App: React.FC = () => {
               </div>
             </div>
           } />
-          <Route path="/plan" element={<ProductionPlan jobs={jobs.filter(j => j.status !== 'Completed')} inventory={inventory} boms={boms} onEditJob={handleEditJob} onViewOrder={handleViewOrder} onPrintTag={handlePrintTag} onPrintHandover={handlePrintHandover} onImportJobs={handleImportJobs} onPrintPlan={() => navigate('/plan-print')} onOpenImportModal={() => setIsImportPlanModalOpen(true)} onUpdateJob={handleSaveJob} />} />
-          <Route path="/completed-plan" element={<CompletedProductionView jobs={jobs} onViewOrder={handleViewOrder} onPrintTag={handlePrintTag} onPrintHandover={handlePrintHandover} />} />
-          <Route path="/plan-vs-actual" element={<PlanVsActualDashboard jobs={jobs} onUpdateActuals={handleUpdateActuals} />} />
-          <Route path="/analysis" element={<ProductionAnalysis jobs={jobs} />} />
-          <Route path="/oee" element={<OEEDashboard jobs={jobs} downtimeLogs={downtimeLogs} machineCapabilities={machineCapabilities} />} />
-          <Route path="/schedule" element={<TimelineView jobs={jobs} onUpdateJob={handleSaveJob} />} />
-          <Route path="/list" element={<JobTable jobs={jobs} inventory={inventory} boms={boms} onEditJob={handleEditJob} onPrintHandover={handlePrintHandover} onPrintTag={handlePrintTag} onViewOrder={handleViewOrder} />} />
-          <Route path="/machines" element={<MachineGrid jobs={jobs} onEditJob={handleEditJob} />} />
+          <Route path="/plan" element={<ProductionPlan jobs={filteredJobs.filter(j => j.status !== 'Completed')} inventory={inventory} boms={boms} onEditJob={handleEditJob} onViewOrder={handleViewOrder} onPrintTag={handlePrintTag} onPrintHandover={handlePrintHandover} onImportJobs={handleImportJobs} onPrintPlan={() => navigate('/plan-print')} onOpenImportModal={() => setIsImportPlanModalOpen(true)} onUpdateJob={handleSaveJob} />} />
+          <Route path="/completed-plan" element={<CompletedProductionView jobs={filteredJobs} onViewOrder={handleViewOrder} onPrintTag={handlePrintTag} onPrintHandover={handlePrintHandover} onRevertJob={handleRevertJob} />} />
+          <Route path="/plan-vs-actual" element={<PlanVsActualDashboard jobs={filteredJobs} onUpdateActuals={handleUpdateActuals} />} />
+          <Route path="/analysis" element={<ProductionAnalysis jobs={filteredJobs} />} />
+          <Route path="/oee" element={<OEEDashboard jobs={filteredJobs} downtimeLogs={filteredDowntimeLogs} machineCapabilities={machineCapabilities} />} />
+          <Route path="/schedule" element={<TimelineView jobs={filteredJobs} onUpdateJob={handleSaveJob} />} />
+          <Route path="/list" element={<JobTable jobs={filteredJobs} inventory={inventory} boms={boms} onEditJob={handleEditJob} onPrintHandover={handlePrintHandover} onPrintTag={handlePrintTag} onViewOrder={handleViewOrder} />} />
+          <Route path="/machines" element={<MachineGrid jobs={filteredJobs} onEditJob={handleEditJob} />} />
           <Route path="/inventory" element={
             <InventoryView 
               inventory={inventory} 
@@ -1273,11 +1522,21 @@ const App: React.FC = () => {
             />
           } />
           <Route path="/master-data" element={<KnowledgeBase customKnowledge={customKnowledge} inventory={inventory} boms={boms} productSpecs={productSpecs} machineCapabilities={machineCapabilities} onSaveKnowledge={handleSaveKnowledge} onDeleteKnowledge={handleDeleteKnowledge} onAddBom={handleAddBom} onUpdateBom={handleUpdateBom} onDeleteBom={handleDeleteBom} />} />
+          <Route path="/excel-sync" element={<ExcelSyncView jobs={jobs} inventory={inventory} boms={boms} productSpecs={productSpecs} machineCapabilities={machineCapabilities} />} />
           <Route path="/ai-knowledge" element={<AiKnowledgeBase customKnowledge={customKnowledge} inventory={inventory} boms={boms} productSpecs={productSpecs} machineCapabilities={machineCapabilities} onSaveKnowledge={handleSaveKnowledge} onDeleteKnowledge={handleDeleteKnowledge} />} />
+          <Route path="/documents" element={<DocumentCenter onAnalyzeFile={(file) => {
+            setIsAssistantOpen(true);
+            setTimeout(() => {
+              if (assistantRef.current) {
+                assistantRef.current.analyzeFile(file);
+              }
+            }, 500);
+          }} />} />
           <Route path="/history" element={<HistoryLog logs={logs} aiMessages={aiMessages} onRevert={handleRevert} jobs={jobs} />} />
-          <Route path="/downtime-logs" element={<DowntimeLogsView logs={downtimeLogs} onDeleteLog={handleDeleteDowntimeLog} />} />
-          <Route path="/daily-downtime" element={<DailyDowntimeReport logs={downtimeLogs} onDeleteLog={handleDeleteDowntimeLog} />} />
-          <Route path="/shift-production" element={<ShiftProductionView logs={shiftProductionLogs} jobs={jobs} onSaveLog={handleSaveShiftProductionLog} />} />
+          <Route path="/downtime-logs" element={<DowntimeLogsView logs={filteredDowntimeLogs} onDeleteLog={handleDeleteDowntimeLog} />} />
+          <Route path="/daily-downtime" element={<DailyDowntimeReport logs={filteredDowntimeLogs} onDeleteLog={handleDeleteDowntimeLog} />} />
+          <Route path="/daily-report" element={<DailyReportGenerator jobs={filteredJobs} dailyReports={filteredDailyReports} onSaveReport={handleSaveDailyReport} onDeleteReport={handleDeleteDailyReport} />} />
+          <Route path="/shift-production" element={<ShiftProductionView logs={filteredShiftLogs} jobs={filteredJobs} onSaveLog={handleSaveShiftProductionLog} />} />
           <Route path="/form-templates" element={
             <FormTemplatesView 
               forms={formTemplates} 
@@ -1313,6 +1572,7 @@ const App: React.FC = () => {
       </main>
       
       <SmartAssistant 
+        ref={assistantRef}
         isOpen={isAssistantOpen} 
         onClose={() => setIsAssistantOpen(false)}
         jobs={jobs}
@@ -1324,6 +1584,9 @@ const App: React.FC = () => {
         customKnowledge={customKnowledge}
         downtimeLogs={downtimeLogs}
         shiftProductionLogs={shiftProductionLogs}
+        dailyReports={dailyReports}
+        documents={documents}
+        logs={logs}
         onUpdateJob={handleSaveJob}
         onCreateJob={handleCreateJob}
         onDeleteJob={handleDeleteJob}
@@ -1346,6 +1609,7 @@ const App: React.FC = () => {
         messages={aiMessages}
         setMessages={setAiMessages}
         onUpdateAiMessage={handleUpdateAiMessage}
+        selectedPeriod={selectedPeriod}
       />
 
       <EditJobModal 

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { ProductionJob, Status, sortMachines, InventoryItem, ProductBOM } from '../types';
-import { Clock, CheckCircle2, Calendar, FileDown, Printer, FileText, Tag, Share, Search, Filter } from 'lucide-react';
+import { Clock, CheckCircle2, Calendar, FileDown, Printer, FileText, Tag, Share, Search, Filter, RotateCcw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 import { formatDateTime } from '../utils/dateUtils';
@@ -11,11 +11,13 @@ interface CompletedProductionViewProps {
   onViewOrder: (job: ProductionJob) => void;
   onPrintTag?: (job: ProductionJob) => void;
   onPrintHandover?: (jobs: ProductionJob[]) => void;
+  onRevertJob?: (job: ProductionJob) => void;
 }
 
-export const CompletedProductionView: React.FC<CompletedProductionViewProps> = ({ jobs, onViewOrder, onPrintTag, onPrintHandover }) => {
+export const CompletedProductionView: React.FC<CompletedProductionViewProps> = ({ jobs, onViewOrder, onPrintTag, onPrintHandover, onRevertJob }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterMachine, setFilterMachine] = useState('All');
+  const [jobToRevert, setJobToRevert] = useState<ProductionJob | null>(null);
 
   const completedJobs = jobs.filter(j => j.status === 'Completed');
 
@@ -170,6 +172,15 @@ export const CompletedProductionView: React.FC<CompletedProductionViewProps> = (
                             <Share size={16} />
                           </button>
                         )}
+                        {onRevertJob && (
+                          <button 
+                            onClick={() => setJobToRevert(job)}
+                            className="p-2 bg-amber-50 text-amber-600 hover:bg-amber-100 rounded-lg transition-colors"
+                            title="นำกลับไปที่แผนการผลิต"
+                          >
+                            <RotateCcw size={16} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -185,6 +196,42 @@ export const CompletedProductionView: React.FC<CompletedProductionViewProps> = (
           </table>
         </div>
       </div>
+
+      {/* Confirmation Modal */}
+      {jobToRevert && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
+            <div className="p-6">
+              <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center mb-4">
+                <RotateCcw className="text-amber-600" size={24} />
+              </div>
+              <h3 className="text-xl font-bold text-slate-800 mb-2">ยืนยันการนำกลับไปที่แผนการผลิต</h3>
+              <p className="text-slate-600 mb-6">
+                คุณต้องการนำงาน <span className="font-bold text-slate-800">{jobToRevert.jobOrder}</span> กลับไปที่แผนการผลิต (เปลี่ยนสถานะเป็น In Progress) ใช่หรือไม่?
+              </p>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => setJobToRevert(null)}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium transition-colors"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  onClick={() => {
+                    if (onRevertJob) {
+                      onRevertJob(jobToRevert);
+                    }
+                    setJobToRevert(null);
+                  }}
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium transition-colors shadow-sm"
+                >
+                  ยืนยันการนำกลับ
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
