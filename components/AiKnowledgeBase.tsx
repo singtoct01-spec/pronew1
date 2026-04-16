@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { CustomKnowledge, InventoryItem, ProductBOM, ProductSpec, MachineMoldCapability } from '../types';
 import { Search, BookOpen, Plus, Trash2, Edit2, BrainCircuit, Tag, Folder, Link as LinkIcon, X, Upload, FileText, File as FileIcon, Image as ImageIcon, Loader2 } from 'lucide-react';
 import { ref, uploadBytes, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { storage } from '../firebase';
+import { collection, doc, setDoc, getDoc } from 'firebase/firestore';
+import { storage, db } from '../firebase';
 import { extractTextFromFile } from '../utils/fileExtractor';
 
 import { formatDateTime } from '../utils/dateUtils';
@@ -55,7 +56,7 @@ export const AiKnowledgeBase: React.FC<AiKnowledgeBaseProps> = ({
     
     setIsUploading(true);
     try {
-      const files = Array.from(e.target.files);
+      const files = Array.from(e.target.files) as File[];
       const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
       
       const results: { file: File, url: string, extractedText: string }[] = [];

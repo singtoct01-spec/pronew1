@@ -446,7 +446,7 @@ export const EditJobModal: React.FC<EditJobModalProps> = ({ isOpen, onClose, job
             <h4 className="text-sm font-bold text-brand-600 uppercase tracking-widest border-l-4 border-brand-500 pl-2">กำหนดการ (Schedule)</h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                <div>
-                  <label className="block text-xs font-bold text-slate-500 mb-1">เวลาเริ่มผลิต</label>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">เวลาเริ่มผลิต (ตามแผน)</label>
                   {isStartDateFocused ? (
                     <input 
                       type="datetime-local" 
@@ -468,7 +468,7 @@ export const EditJobModal: React.FC<EditJobModalProps> = ({ isOpen, onClose, job
                   )}
                </div>
                <div>
-                  <label className="block text-xs font-bold text-slate-500 mb-1">เวลาสิ้นสุด</label>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">เวลาสิ้นสุด (ตามแผน)</label>
                   {isEndDateFocused ? (
                     <input 
                       type="datetime-local" 
@@ -489,7 +489,42 @@ export const EditJobModal: React.FC<EditJobModalProps> = ({ isOpen, onClose, job
                     />
                   )}
                </div>
+               <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">เวลาเริ่มผลิต (จริง)</label>
+                  <input 
+                    type="datetime-local" 
+                    lang="th-TH" 
+                    value={toInputString(formData.actualStartDate)} 
+                    onChange={e => setFormData({ ...formData, actualStartDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })} 
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" 
+                  />
+               </div>
+               <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">เวลาสิ้นสุด (จริง)</label>
+                  <input 
+                    type="datetime-local" 
+                    lang="th-TH" 
+                    value={toInputString(formData.actualEndDate)} 
+                    onChange={e => setFormData({ ...formData, actualEndDate: e.target.value ? new Date(e.target.value).toISOString() : undefined })} 
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" 
+                  />
+               </div>
             </div>
+            
+            {formData.status === 'Delayed' && (
+              <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <label className="block text-sm font-bold text-red-700 mb-2">สาเหตุที่ล่าช้า (Root Cause)</label>
+                <textarea 
+                  value={formData.delayReason || ''} 
+                  onChange={e => setFormData({ ...formData, delayReason: e.target.value })} 
+                  className="w-full px-3 py-2 border border-red-300 rounded-lg text-sm focus:ring-red-500 focus:border-red-500" 
+                  rows={3}
+                  placeholder="ระบุสาเหตุที่ทำให้งานล่าช้ากว่าแผน..."
+                  required
+                />
+                <p className="text-xs text-red-500 mt-1">จำเป็นต้องระบุสาเหตุเมื่อสถานะเป็น "ล่าช้า"</p>
+              </div>
+            )}
           </div>
 
           {/* Section 4: Materials */}

@@ -34,6 +34,9 @@ import { GoogleSheetsImportModal } from './components/GoogleSheetsImportModal';
 import { PlanVsActualDashboard } from './components/PlanVsActualDashboard';
 import { InventoryDashboard } from './components/InventoryDashboard';
 import { MeetingPlannerView } from './components/MeetingPlannerView';
+import { DelayedJobsReport } from './components/DelayedJobsReport';
+import { PlanningKPIDashboard } from './components/PlanningKPIDashboard';
+import { SmartCalculatorView } from './components/SmartCalculatorView';
 import { Login } from './components/Login';
 import { UserManagement } from './components/UserManagement';
 import { ProductionJob, MOCK_INVENTORY, MOCK_BOMS, PRODUCT_SPECS, MACHINE_MOLD_CAPABILITIES, AuditLog, AiMessage, FormTemplate, DowntimeLog, CustomKnowledge, InventoryItem, ProductBOM, AppUser, ShiftProductionLog, DailyReportLog, Status, DatePeriod } from './types';
@@ -100,6 +103,7 @@ const App: React.FC = () => {
         { id: 'documents', label: 'ศูนย์เอกสาร', icon: <FileText size={20} /> },
         { id: 'form-templates', label: 'แบบฟอร์มเอกสาร', icon: <FileText size={20} /> },
         { id: 'daily-report', label: 'รายงานประจำวัน (AI)', icon: <FileText size={20} /> },
+        { id: 'delayed-jobs-report', label: 'สรุปงานล่าช้า', icon: <AlertOctagon size={20} /> },
         { id: 'meeting-planner', label: 'แผนการประชุม (CAR/PAR)', icon: <Users size={20} /> },
       ]
     },
@@ -1596,9 +1600,11 @@ const App: React.FC = () => {
             </div>
           } />
           <Route path="/plan" element={<ProductionPlan jobs={filteredJobs.filter(j => j.status !== 'Completed')} inventory={inventory} boms={boms} onEditJob={handleEditJob} onViewOrder={handleViewOrder} onPrintTag={handlePrintTag} onPrintHandover={handlePrintHandover} onImportJobs={handleImportJobs} onPrintPlan={() => navigate('/plan-print')} onOpenImportModal={() => setIsImportPlanModalOpen(true)} onUpdateJob={handleSaveJob} />} />
+          <Route path="/smart-calculator" element={<SmartCalculatorView />} />
           <Route path="/completed-plan" element={<CompletedProductionView jobs={filteredJobs} onViewOrder={handleViewOrder} onPrintTag={handlePrintTag} onPrintHandover={handlePrintHandover} onRevertJob={handleRevertJob} />} />
           <Route path="/plan-vs-actual" element={<PlanVsActualDashboard jobs={filteredJobs} onUpdateActuals={handleUpdateActuals} />} />
           <Route path="/analysis" element={<ProductionAnalysis jobs={filteredJobs} />} />
+          <Route path="/planning-kpi" element={<PlanningKPIDashboard jobs={filteredJobs} />} />
           <Route path="/oee" element={<OEEDashboard jobs={filteredJobs} downtimeLogs={filteredDowntimeLogs} machineCapabilities={machineCapabilities} />} />
           <Route path="/schedule" element={<TimelineView jobs={filteredJobs} onUpdateJob={handleSaveJob} />} />
           <Route path="/list" element={<JobTable jobs={filteredJobs} inventory={inventory} boms={boms} onEditJob={handleEditJob} onPrintHandover={handlePrintHandover} onPrintTag={handlePrintTag} onViewOrder={handleViewOrder} />} />
@@ -1632,7 +1638,8 @@ const App: React.FC = () => {
           <Route path="/history" element={<HistoryLog logs={logs} aiMessages={aiMessages} onRevert={handleRevert} jobs={jobs} />} />
           <Route path="/downtime-logs" element={<DowntimeLogsView logs={filteredDowntimeLogs} onDeleteLog={handleDeleteDowntimeLog} />} />
           <Route path="/daily-downtime" element={<DailyDowntimeReport logs={filteredDowntimeLogs} onDeleteLog={handleDeleteDowntimeLog} />} />
-          <Route path="/meeting-planner" element={<MeetingPlannerView jobs={filteredJobs} downtimeLogs={filteredDowntimeLogs} />} />
+          <Route path="/meeting-planner" element={<MeetingPlannerView jobs={filteredJobs} downtimeLogs={filteredDowntimeLogs} dailyReports={filteredDailyReports} />} />
+          <Route path="/delayed-jobs-report" element={<DelayedJobsReport jobs={filteredJobs} />} />
           <Route path="/daily-report" element={<DailyReportGenerator jobs={filteredJobs} dailyReports={filteredDailyReports} onSaveReport={handleSaveDailyReport} onDeleteReport={handleDeleteDailyReport} />} />
           <Route path="/shift-production" element={<ShiftProductionView logs={filteredShiftLogs} jobs={filteredJobs} onSaveLog={handleSaveShiftProductionLog} />} />
           <Route path="/form-templates" element={

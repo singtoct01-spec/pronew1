@@ -2,7 +2,7 @@
 
 
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, Table, Calendar, Activity, ClipboardList, PackageSearch, History, Clock, Database, TrendingUp, FileText, AlertOctagon, Users, BrainCircuit, CheckCircle2, Cpu, BarChart3 } from 'lucide-react';
+import { LayoutDashboard, Table, Calendar, Activity, ClipboardList, PackageSearch, History, Clock, Database, TrendingUp, FileText, AlertOctagon, Users, BrainCircuit, CheckCircle2, Cpu, BarChart3, Target, Calculator } from 'lucide-react';
 import { AppUser, DatePeriod } from '../types';
 import { getDateRangeForPeriod, formatDateOnly } from '../utils/dateUtils';
 
@@ -29,6 +29,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onChangeView, cur
       title: 'ภาพรวม & แดชบอร์ด',
       items: [
         { id: 'dashboard', label: 'ภาพรวม (Overview)', icon: <LayoutDashboard size={20} /> },
+        { id: 'planning-kpi', label: 'KPI แผนกวางแผน', icon: <Target size={20} /> },
         { id: 'analysis', label: 'วิเคราะห์การผลิต', icon: <TrendingUp size={20} /> },
         { id: 'oee', label: 'OEE Dashboard', icon: <Activity size={20} /> },
       ]
@@ -37,6 +38,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onChangeView, cur
       title: 'แผนและการผลิต',
       items: [
         { id: 'plan', label: 'แผนการผลิต', icon: <ClipboardList size={20} /> },
+        { id: 'smart-calculator', label: 'เครื่องมือคำนวณแผน', icon: <Calculator size={20} /> },
         { id: 'schedule', label: 'ไทม์ไลน์ (Timeline)', icon: <Calendar size={20} /> },
         { id: 'list', label: 'รายการงานทั้งหมด', icon: <Table size={20} /> },
         { id: 'import-plan', label: 'นำเข้าแผนผลิต (Excel)', icon: <FileText size={20} /> },
@@ -68,6 +70,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onChangeView, cur
         { id: 'documents', label: 'ศูนย์เอกสาร', icon: <FileText size={20} /> },
         { id: 'form-templates', label: 'แบบฟอร์มเอกสาร', icon: <FileText size={20} /> },
         { id: 'daily-report', label: 'รายงานประจำวัน (AI)', icon: <FileText size={20} /> },
+        { id: 'delayed-jobs-report', label: 'สรุปงานล่าช้า', icon: <AlertOctagon size={20} /> },
         { id: 'meeting-planner', label: 'แผนการประชุม (CAR/PAR)', icon: <Users size={20} /> },
       ]
     },

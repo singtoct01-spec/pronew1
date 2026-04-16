@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Calendar, Clock, FileText, Printer, Plus, CheckSquare, AlertTriangle, X, ChevronRight, FileSignature, Target } from 'lucide-react';
+import { Users, Calendar, Clock, FileText, Printer, Plus, CheckSquare, AlertTriangle, X, ChevronRight, FileSignature, Target, FileBarChart } from 'lucide-react';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { ProductionJob, DowntimeLog } from '../types';
+import { ProductionJob, DowntimeLog, DailyReportLog } from '../types';
 
 interface Meeting {
   id: string;
@@ -10,7 +10,8 @@ interface Meeting {
   date: string;
   time: string;
   location: string;
-  relatedJobId: string;
+  relatedReportId?: string;
+  relatedJobIds?: string[];
   attendees: string[];
   status: 'Draft' | 'Scheduled' | 'Completed';
   createdAt: string;
@@ -19,20 +20,22 @@ interface Meeting {
 interface MeetingPlannerViewProps {
   jobs: ProductionJob[];
   downtimeLogs: DowntimeLog[];
+  dailyReports: DailyReportLog[];
 }
 
-export const MeetingPlannerView: React.FC<MeetingPlannerViewProps> = ({ jobs, downtimeLogs }) => {
+export const MeetingPlannerView: React.FC<MeetingPlannerViewProps> = ({ jobs, downtimeLogs, dailyReports }) => {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   // Form state
-  const [title, setTitle] = useState('ประชุมวิเคราะห์สาเหตุงานล่าช้า (ตกแผน) และแนวทางแก้ไข');
+  const [title, setTitle] = useState('ประชุมติดตามงานล่าช้าประจำวัน');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [time, setTime] = useState('10:00');
   const [location, setLocation] = useState('ห้องประชุม 1');
-  const [relatedJobId, setRelatedJobId] = useState('');
+  const [relatedReportId, setRelatedReportId] = useState('');
+  const [relatedJobIds, setRelatedJobIds] = useState<string[]>([]);
   const [attendees, setAttendees] = useState<string[]>(['ฝ่ายผลิต', 'ฝ่ายวางแผน', 'ฝ่ายซ่อมบำรุง', 'ฝ่ายควบคุมคุณภาพ (QC)']);
 
   // Allow selecting any job, but sort delayed ones first
@@ -64,7 +67,8 @@ export const MeetingPlannerView: React.FC<MeetingPlannerViewProps> = ({ jobs, do
         date,
         time,
         location,
-        relatedJobId,
+        relatedReportId,
+        relatedJobIds,
         attendees,
         status: 'Scheduled',
         createdAt: new Date().toISOString()
@@ -99,11 +103,12 @@ export const MeetingPlannerView: React.FC<MeetingPlannerViewProps> = ({ jobs, do
   };
 
   const resetForm = () => {
-    setTitle('ประชุมวิเคราะห์สาเหตุงานล่าช้า (ตกแผน) และแนวทางแก้ไข');
+    setTitle('ประชุมติดตามงานล่าช้าประจำวัน');
     setDate(new Date().toISOString().split('T')[0]);
     setTime('10:00');
     setLocation('ห้องประชุม 1');
-    setRelatedJobId('');
+    setRelatedReportId('');
+    setRelatedJobIds([]);
     setAttendees(['ฝ่ายผลิต', 'ฝ่ายวางแผน', 'ฝ่ายซ่อมบำรุง', 'ฝ่ายควบคุมคุณภาพ (QC)']);
     setSelectedMeeting(null);
   };
@@ -114,7 +119,8 @@ export const MeetingPlannerView: React.FC<MeetingPlannerViewProps> = ({ jobs, do
     setDate(meeting.date);
     setTime(meeting.time);
     setLocation(meeting.location);
-    setRelatedJobId(meeting.relatedJobId);
+    setRelatedReportId(meeting.relatedReportId || '');
+    setRelatedJobIds(meeting.relatedJobIds || []);
     setAttendees(meeting.attendees);
     setIsModalOpen(true);
   };
@@ -181,9 +187,9 @@ export const MeetingPlannerView: React.FC<MeetingPlannerViewProps> = ({ jobs, do
                       <span className="flex items-center gap-1"><Calendar size={14} /> {new Date(meeting.date).toLocaleDateString('th-TH')}</span>
                       <span className="flex items-center gap-1"><Clock size={14} /> {meeting.time} น.</span>
                     </div>
-                    {meeting.relatedJobId && (
+                    {meeting.relatedReportId && (
                       <div className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 text-red-600 rounded text-xs font-medium">
-                        <AlertTriangle size={12} /> อ้างอิงงานตกแผน: {meeting.relatedJobId}
+                        <FileBarChart size={12} /> อ้างอิงรายงาน AI
                       </div>
                     )}
                   </div>
@@ -239,20 +245,49 @@ export const MeetingPlannerView: React.FC<MeetingPlannerViewProps> = ({ jobs, do
 
                   <div className="bg-red-50 p-4 rounded-lg border border-red-100">
                     <h3 className="font-bold text-red-800 mb-3 flex items-center gap-2">
-                      <AlertTriangle size={18} /> อ้างอิงงานที่ตกแผน (Delayed Job)
+                      <FileBarChart size={18} /> อ้างอิงรายงานประจำวัน (AI Report)
                     </h3>
-                    {selectedMeeting.relatedJobId ? (
+                    {selectedMeeting.relatedReportId ? (
                       <div>
-                        <p className="font-medium text-red-700">{selectedMeeting.relatedJobId}</p>
-                        <p className="text-sm text-red-600 mt-1">
-                          {jobs.find(j => j.id === selectedMeeting.relatedJobId)?.productItem || 'ไม่พบข้อมูลสินค้า'}
+                        <p className="font-medium text-red-700">
+                          รายงานวันที่ {dailyReports.find(r => r.id === selectedMeeting.relatedReportId) 
+                            ? new Date(dailyReports.find(r => r.id === selectedMeeting.relatedReportId)!.date).toLocaleDateString('th-TH') 
+                            : 'ไม่พบข้อมูล'}
+                        </p>
+                        <p className="text-sm text-red-600 mt-1 line-clamp-2">
+                          {dailyReports.find(r => r.id === selectedMeeting.relatedReportId)?.generatedReport || ''}
                         </p>
                       </div>
                     ) : (
-                      <p className="text-sm text-slate-500">ไม่ได้ระบุงานอ้างอิง</p>
+                      <p className="text-sm text-slate-500">ไม่ได้ระบุรายงานอ้างอิง</p>
                     )}
                   </div>
                 </div>
+
+                {selectedMeeting.relatedJobIds && selectedMeeting.relatedJobIds.length > 0 && (
+                  <div className="mb-8">
+                    <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2 border-b border-slate-200 pb-2">
+                      <AlertTriangle size={20} className="text-amber-500" /> งานที่ล่าช้าที่เกี่ยวข้อง
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {selectedMeeting.relatedJobIds.map(jobId => {
+                        const job = jobs.find(j => j.id === jobId);
+                        if (!job) return null;
+                        return (
+                          <div key={job.id} className="p-3 border border-slate-200 rounded-lg bg-white flex justify-between items-center">
+                            <div>
+                              <p className="font-medium text-slate-800 text-sm">{job.productName}</p>
+                              <p className="text-xs text-slate-500 mt-0.5">แผน: {new Date(job.plannedEndDate).toLocaleDateString('th-TH')}</p>
+                            </div>
+                            {job.status === 'Delayed' && (
+                              <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded font-medium">ล่าช้า</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 <div className="mb-8">
                   <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2 border-b border-slate-200 pb-2">
@@ -408,22 +443,52 @@ export const MeetingPlannerView: React.FC<MeetingPlannerViewProps> = ({ jobs, do
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">อ้างอิงงานที่ตกแผน (ถ้ามี)</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">อ้างอิงรายงานประจำวัน (AI Report)</label>
                   <select 
-                    value={relatedJobId}
-                    onChange={(e) => setRelatedJobId(e.target.value)}
+                    value={relatedReportId}
+                    onChange={(e) => setRelatedReportId(e.target.value)}
                     className="w-full border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
                   >
                     <option value="">-- ไม่ระบุ --</option>
-                    {sortedJobs.map(job => (
-                      <option key={job.id} value={job.id}>
-                        {job.status === 'Delayed' ? '⚠️ [ล่าช้า] ' : ''}
-                        {job.id} - {job.productItem}
+                    {dailyReports.map(report => (
+                      <option key={report.id} value={report.id}>
+                        รายงานวันที่ {new Date(report.date).toLocaleDateString('th-TH')}
                       </option>
                     ))}
                   </select>
+                  {dailyReports.length === 0 && (
+                    <p className="text-xs text-slate-500 mt-1">ไม่มีรายงานในระบบ</p>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">อ้างอิงงานที่ล่าช้า (เลือกได้หลายรายการ)</label>
+                <div className="max-h-40 overflow-y-auto border border-slate-200 rounded-lg p-2 space-y-1">
+                  {sortedJobs.map(job => (
+                    <label key={job.id} className="flex items-center gap-2 p-2 hover:bg-slate-50 rounded cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={relatedJobIds.includes(job.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setRelatedJobIds([...relatedJobIds, job.id]);
+                          } else {
+                            setRelatedJobIds(relatedJobIds.filter(id => id !== job.id));
+                          }
+                        }}
+                        className="rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                      />
+                      <div className="flex-1 flex justify-between items-center">
+                        <span className="text-sm font-medium text-slate-700">{job.productName}</span>
+                        {job.status === 'Delayed' && (
+                          <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded">ล่าช้า</span>
+                        )}
+                      </div>
+                    </label>
+                  ))}
                   {sortedJobs.length === 0 && (
-                    <p className="text-xs text-emerald-600 mt-1">ไม่มีงานในระบบ</p>
+                    <p className="text-sm text-slate-500 text-center py-2">ไม่มีข้อมูลงาน</p>
                   )}
                 </div>
               </div>
@@ -510,257 +575,110 @@ export const MeetingPlannerView: React.FC<MeetingPlannerViewProps> = ({ jobs, do
 
     {/* Print View Component */}
     {selectedMeeting && (
-      <div className="hidden print:block bg-white p-8 max-w-4xl mx-auto text-black">
-        {/* Page 1: Agenda & Attendance */}
+      <div className="hidden print:block bg-white p-8 max-w-4xl mx-auto text-black font-sans">
         <div className="print-page">
-          <div className="text-center mb-8 border-b-2 border-black pb-4">
-            <h1 className="text-2xl font-bold mb-2">วาระการประชุม และ ใบลงทะเบียนเข้าร่วมประชุม</h1>
+          <div className="text-center mb-6 border-b-2 border-black pb-4">
+            <h1 className="text-2xl font-bold mb-2">วาระการประชุม และ ติดตามงานล่าช้า</h1>
             <h2 className="text-xl">{selectedMeeting.title}</h2>
           </div>
 
-          <div className="grid grid-cols-2 gap-4 mb-8 text-sm">
+          <div className="grid grid-cols-2 gap-4 mb-6 text-sm">
             <div><span className="font-bold">วันที่ประชุม:</span> {new Date(selectedMeeting.date).toLocaleDateString('th-TH')}</div>
             <div><span className="font-bold">เวลา:</span> {selectedMeeting.time} น.</div>
             <div><span className="font-bold">สถานที่:</span> {selectedMeeting.location}</div>
-            <div><span className="font-bold">อ้างอิงงาน (Job):</span> {selectedMeeting.relatedJobId ? `${selectedMeeting.relatedJobId} - ${jobs.find(j => j.id === selectedMeeting.relatedJobId)?.productItem || ''}` : '-'}</div>
+            <div>
+              <span className="font-bold">อ้างอิงรายงาน:</span>{' '}
+              {selectedMeeting.relatedReportId && dailyReports.find(r => r.id === selectedMeeting.relatedReportId)
+                ? `รายงานประจำวันที่ ${new Date(dailyReports.find(r => r.id === selectedMeeting.relatedReportId)!.date).toLocaleDateString('th-TH')}`
+                : '-'}
+            </div>
           </div>
 
-          <div className="mb-8">
-            <h3 className="font-bold text-lg mb-3 border-b border-gray-300 pb-1 flex items-center gap-2">
-              <Target size={20} /> หัวข้อการประชุม (Agenda)
+          {/* Daily Report Summary (if selected) */}
+          {selectedMeeting.relatedReportId && dailyReports.find(r => r.id === selectedMeeting.relatedReportId) && (
+            <div className="mb-6 border border-gray-300 p-4 bg-gray-50 rounded">
+              <h3 className="font-bold text-base mb-2 flex items-center gap-2">
+                <AlertTriangle size={16} /> สรุปประเด็นงานล่าช้าจาก AI
+              </h3>
+              <div className="text-sm text-gray-800 whitespace-pre-wrap">
+                {dailyReports.find(r => r.id === selectedMeeting.relatedReportId)?.generatedReport}
+              </div>
+            </div>
+          )}
+
+          {/* Related Jobs List */}
+          {selectedMeeting.relatedJobIds && selectedMeeting.relatedJobIds.length > 0 && (
+            <div className="mb-6">
+              <h3 className="font-bold text-base mb-2 border-b border-gray-300 pb-1 flex items-center gap-2">
+                <AlertTriangle size={16} /> งานที่ล่าช้าที่เกี่ยวข้อง
+              </h3>
+              <ul className="list-disc pl-6 space-y-1 text-sm">
+                {selectedMeeting.relatedJobIds.map(jobId => {
+                  const job = jobs.find(j => j.id === jobId);
+                  if (!job) return null;
+                  return (
+                    <li key={job.id}>
+                      <strong>{job.productName}</strong> (แผน: {new Date(job.plannedEndDate).toLocaleDateString('th-TH')})
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
+          <div className="mb-6">
+            <h3 className="font-bold text-base mb-2 border-b border-gray-300 pb-1 flex items-center gap-2">
+              <Target size={16} /> หัวข้อการประชุม (Agenda)
             </h3>
-            <ol className="list-decimal pl-6 space-y-3 text-sm">
+            <ol className="list-decimal pl-6 space-y-2 text-sm">
               <li>
-                <strong>แจ้งวัตถุประสงค์และสรุปสถานการณ์ (What happened?)</strong>
-                <p className="text-gray-600 mt-1">ทบทวนเป้าหมายการผลิตเทียบกับผลลัพธ์จริงที่เกิดขึ้น (ตกแผนไปเท่าไหร่)</p>
+                <strong>สรุปสถานการณ์ (What happened?)</strong> - ทบทวนเป้าหมายเทียบกับผลลัพธ์จริง
               </li>
               <li>
-                <strong>วิเคราะห์สาเหตุรากเหง้า (Root Cause Analysis - 4M1E)</strong>
-                <p className="text-gray-600 mt-1">ค้นหาสาเหตุที่แท้จริงจาก Man (คน), Machine (เครื่องจักร), Material (วัตถุดิบ), Method (วิธีการ), Environment (สภาพแวดล้อม)</p>
+                <strong>วิเคราะห์สาเหตุ (Root Cause)</strong> - วิเคราะห์ปัญหาที่ทำให้งานล่าช้า
               </li>
               <li>
-                <strong>กำหนดแนวทางแก้ไขระยะสั้น (Correction / Short-term Action)</strong>
-                <p className="text-gray-600 mt-1">วิธีแก้ปัญหาเฉพาะหน้าเพื่อให้งานปัจจุบันส่งมอบได้ทัน (เช่น ทำ OT, เพิ่มคน, สลับเครื่อง)</p>
-              </li>
-              <li>
-                <strong>กำหนดแนวทางป้องกันระยะยาว (Preventive Action)</strong>
-                <p className="text-gray-600 mt-1">วิธีป้องกันไม่ให้ปัญหานี้เกิดขึ้นซ้ำอีกในอนาคต</p>
-              </li>
-              <li>
-                <strong>สรุปผู้รับผิดชอบและกำหนดเวลา (Action Plan)</strong>
-                <p className="text-gray-600 mt-1">ใครต้องทำอะไร และเสร็จเมื่อไหร่</p>
+                <strong>แนวทางแก้ไข (Action Plan)</strong> - กำหนดวิธีแก้ปัญหาและผู้รับผิดชอบ
               </li>
             </ol>
           </div>
 
           <div>
-            <h3 className="font-bold text-lg mb-3 border-b border-gray-300 pb-1 flex items-center gap-2">
-              <FileSignature size={20} /> ใบลงทะเบียนเข้าร่วมประชุม (Attendance Sheet)
+            <h3 className="font-bold text-base mb-2 border-b border-gray-300 pb-1 flex items-center gap-2">
+              <FileSignature size={16} /> ผู้เข้าร่วมประชุม (Attendance)
             </h3>
-            <table className="w-full border-collapse border border-black text-sm mt-4">
+            <table className="w-full border-collapse border border-black text-sm mt-2">
               <thead>
                 <tr className="bg-gray-100">
-                  <th className="border border-black py-2 px-4 w-12 text-center">ลำดับ</th>
-                  <th className="border border-black py-2 px-4 w-48 text-left">ชื่อ - นามสกุล</th>
-                  <th className="border border-black py-2 px-4 w-32 text-left">หน่วยงาน/ฝ่าย</th>
-                  <th className="border border-black py-2 px-4 w-32 text-center">ลายมือชื่อ</th>
-                  <th className="border border-black py-2 px-4 text-left">หมายเหตุ</th>
+                  <th className="border border-black py-1.5 px-3 w-12 text-center">ลำดับ</th>
+                  <th className="border border-black py-1.5 px-3 w-48 text-left">ชื่อ - นามสกุล</th>
+                  <th className="border border-black py-1.5 px-3 w-32 text-left">หน่วยงาน</th>
+                  <th className="border border-black py-1.5 px-3 w-32 text-center">ลายเซ็น</th>
                 </tr>
               </thead>
               <tbody>
-                {Array.from({ length: 10 }).map((_, i) => (
+                {Array.from({ length: Math.max(5, selectedMeeting.attendees.length) }).map((_, i) => (
                   <tr key={i}>
-                    <td className="border border-black py-4 px-4 text-center">{i + 1}</td>
-                    <td className="border border-black py-4 px-4"></td>
-                    <td className="border border-black py-4 px-4 text-gray-500 text-xs">
+                    <td className="border border-black py-3 px-3 text-center">{i + 1}</td>
+                    <td className="border border-black py-3 px-3"></td>
+                    <td className="border border-black py-3 px-3 text-gray-600 text-xs">
                       {selectedMeeting.attendees[i] || ''}
                     </td>
-                    <td className="border border-black py-4 px-4"></td>
-                    <td className="border border-black py-4 px-4"></td>
+                    <td className="border border-black py-3 px-3"></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           
-          <div className="mt-12 flex justify-between text-sm">
+          <div className="mt-8 flex justify-between text-sm">
             <div className="text-center">
               <p>_________________________</p>
-              <p className="mt-2">ผู้บันทึกการประชุม</p>
-              <p className="mt-1">วันที่: ____/____/______</p>
+              <p className="mt-1">ผู้บันทึกการประชุม</p>
             </div>
             <div className="text-center">
               <p>_________________________</p>
-              <p className="mt-2">ผู้อนุมัติ / ประธานในที่ประชุม</p>
-              <p className="mt-1">วันที่: ____/____/______</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Page 2: Plan vs Actual & Downtime */}
-        {selectedMeeting.relatedJobId && jobs.find(j => j.id === selectedMeeting.relatedJobId) && (
-          <div className="pt-8" style={{ pageBreakBefore: 'always' }}>
-            <div className="text-center mb-8 border-b-2 border-black pb-4">
-              <h1 className="text-2xl font-bold mb-2">รายงานสรุปข้อมูลประกอบการประชุม</h1>
-              <h2 className="text-xl">อ้างอิงงาน: {selectedMeeting.relatedJobId} - {jobs.find(j => j.id === selectedMeeting.relatedJobId)?.productItem}</h2>
-            </div>
-
-            {(() => {
-              const job = jobs.find(j => j.id === selectedMeeting.relatedJobId)!;
-              const relatedDowntime = downtimeLogs.filter(log => 
-                log.machineId === job.machineId && 
-                new Date(log.date) >= new Date(job.startDate) && 
-                new Date(log.date) <= new Date(job.endDate)
-              );
-              
-              const target = job.totalProduction;
-              const actual = job.actualProduction || 0;
-              const diff = actual - target;
-              const percent = target > 0 ? Math.round((actual / target) * 100) : 0;
-
-              return (
-                <>
-                  <div className="mb-8">
-                    <h3 className="font-bold text-lg mb-3 border-b border-gray-300 pb-1">1. สรุปยอดผลิตเทียบแผน (Plan vs Actual)</h3>
-                    <table className="w-full border-collapse border border-black text-sm">
-                      <tbody>
-                        <tr>
-                          <td className="border border-black py-2 px-4 font-bold bg-gray-100 w-1/4">รหัสสินค้า</td>
-                          <td className="border border-black py-2 px-4 w-1/4">{job.productItem}</td>
-                          <td className="border border-black py-2 px-4 font-bold bg-gray-100 w-1/4">เครื่องจักร</td>
-                          <td className="border border-black py-2 px-4 w-1/4">{job.machineId}</td>
-                        </tr>
-                        <tr>
-                          <td className="border border-black py-2 px-4 font-bold bg-gray-100">วันที่เริ่ม</td>
-                          <td className="border border-black py-2 px-4">{new Date(job.startDate).toLocaleDateString('th-TH')}</td>
-                          <td className="border border-black py-2 px-4 font-bold bg-gray-100">วันที่สิ้นสุด</td>
-                          <td className="border border-black py-2 px-4">{new Date(job.endDate).toLocaleDateString('th-TH')}</td>
-                        </tr>
-                        <tr>
-                          <td className="border border-black py-2 px-4 font-bold bg-gray-100">เป้าหมาย (Plan)</td>
-                          <td className="border border-black py-2 px-4">{target.toLocaleString()} ชิ้น</td>
-                          <td className="border border-black py-2 px-4 font-bold bg-gray-100">ผลิตได้จริง (Actual)</td>
-                          <td className="border border-black py-2 px-4">{actual.toLocaleString()} ชิ้น</td>
-                        </tr>
-                        <tr>
-                          <td className="border border-black py-2 px-4 font-bold bg-gray-100">ผลต่าง (Diff)</td>
-                          <td className={`border border-black py-2 px-4 font-bold ${diff < 0 ? 'text-red-600' : 'text-green-600'}`}>
-                            {diff.toLocaleString()} ชิ้น
-                          </td>
-                          <td className="border border-black py-2 px-4 font-bold bg-gray-100">% ความสำเร็จ</td>
-                          <td className={`border border-black py-2 px-4 font-bold ${percent < 100 ? 'text-red-600' : 'text-green-600'}`}>
-                            {percent}%
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div className="mb-8">
-                    <h3 className="font-bold text-lg mb-3 border-b border-gray-300 pb-1">2. ประวัติเครื่องจักรขัดข้อง (Downtime Report)</h3>
-                    {relatedDowntime.length > 0 ? (
-                      <table className="w-full border-collapse border border-black text-sm">
-                        <thead>
-                          <tr className="bg-gray-100">
-                            <th className="border border-black py-2 px-4 text-center">วันที่</th>
-                            <th className="border border-black py-2 px-4 text-center">เวลา</th>
-                            <th className="border border-black py-2 px-4 text-center">ระยะเวลา (นาที)</th>
-                            <th className="border border-black py-2 px-4 text-left">หมวดหมู่</th>
-                            <th className="border border-black py-2 px-4 text-left">สาเหตุ</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {relatedDowntime.map(log => (
-                            <tr key={log.id}>
-                              <td className="border border-black py-2 px-4 text-center">{new Date(log.date).toLocaleDateString('th-TH')}</td>
-                              <td className="border border-black py-2 px-4 text-center">{log.startTime || '-'} - {log.endTime || '-'}</td>
-                              <td className="border border-black py-2 px-4 text-center text-red-600 font-bold">{log.durationMinutes}</td>
-                              <td className="border border-black py-2 px-4">{log.category}</td>
-                              <td className="border border-black py-2 px-4">{log.reason}</td>
-                            </tr>
-                          ))}
-                          <tr className="bg-gray-50 font-bold">
-                            <td colSpan={2} className="border border-black py-2 px-4 text-right">รวมเวลาสูญเสียทั้งหมด:</td>
-                            <td className="border border-black py-2 px-4 text-center text-red-600">
-                              {relatedDowntime.reduce((sum, log) => sum + log.durationMinutes, 0)} นาที
-                            </td>
-                            <td colSpan={2} className="border border-black py-2 px-4"></td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    ) : (
-                      <div className="border border-black p-4 text-center text-gray-500 italic">
-                        ไม่พบประวัติเครื่องจักรขัดข้องในช่วงเวลาที่ผลิตงานนี้
-                      </div>
-                    )}
-                  </div>
-                </>
-              );
-            })()}
-          </div>
-        )}
-
-        {/* Page 3: CAR/PAR Form */}
-        <div className="pt-8" style={{ pageBreakBefore: 'always' }}>
-          <div className="text-center mb-8 border-b-2 border-black pb-4">
-            <h1 className="text-2xl font-bold mb-2">ใบรายงานปัญหาและแนวทางแก้ไข (CAR / PAR)</h1>
-            <h2 className="text-xl">Corrective / Preventive Action Request</h2>
-          </div>
-
-          <div className="border-2 border-black p-6">
-            <div className="grid grid-cols-2 gap-4 mb-6 text-sm border-b border-black pb-4">
-              <div><span className="font-bold">เลขที่เอกสาร:</span> _________________</div>
-              <div><span className="font-bold">วันที่ออกเอกสาร:</span> {new Date(selectedMeeting.date).toLocaleDateString('th-TH')}</div>
-              <div><span className="font-bold">หน่วยงานที่พบปัญหา:</span> _________________</div>
-              <div><span className="font-bold">หน่วยงานที่ต้องแก้ไข:</span> _________________</div>
-              <div className="col-span-2">
-                <span className="font-bold">อ้างอิงงาน (Job):</span> {selectedMeeting.relatedJobId ? `${selectedMeeting.relatedJobId} - ${jobs.find(j => j.id === selectedMeeting.relatedJobId)?.productItem || ''}` : '_________________________________________'}
-              </div>
-            </div>
-
-            <div className="mb-6">
-              <h3 className="font-bold mb-2">1. รายละเอียดของปัญหา (Problem Description)</h3>
-              <div className="border border-gray-400 p-4 min-h-[100px] text-sm">
-                {selectedMeeting.relatedJobId ? (
-                  <p>พบปัญหางานผลิตล่าช้า (ตกแผน) ในกระบวนการผลิต รหัสงาน: {selectedMeeting.relatedJobId}</p>
-                ) : (
-                  <p className="text-gray-400">ระบุรายละเอียดปัญหาที่พบ...</p>
-                )}
-              </div>
-            </div>
-
-            <div className="mb-6">
-              <h3 className="font-bold mb-2">2. การวิเคราะห์สาเหตุรากเหง้า (Root Cause Analysis - 4M1E)</h3>
-              <div className="border border-gray-400 p-4 min-h-[150px] text-sm flex flex-col gap-2">
-                <p>[ ] Man (คน): ____________________________________________________________________</p>
-                <p>[ ] Machine (เครื่องจักร): _____________________________________________________________</p>
-                <p>[ ] Material (วัตถุดิบ): ______________________________________________________________</p>
-                <p>[ ] Method (วิธีการ): _______________________________________________________________</p>
-                <p>[ ] Environment (สภาพแวดล้อม): _______________________________________________________</p>
-              </div>
-            </div>
-
-            <div className="mb-6">
-              <h3 className="font-bold mb-2">3. การแก้ไขเบื้องต้น (Correction)</h3>
-              <div className="border border-gray-400 p-4 min-h-[100px]"></div>
-            </div>
-
-            <div className="mb-6">
-              <h3 className="font-bold mb-2">4. แนวทางป้องกันการเกิดซ้ำ (Preventive Action)</h3>
-              <div className="border border-gray-400 p-4 min-h-[100px]"></div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-8 mt-12 text-sm">
-              <div className="text-center">
-                <p>_________________________</p>
-                <p className="mt-2">ผู้รายงานปัญหา</p>
-                <p className="mt-1">วันที่: ____/____/______</p>
-              </div>
-              <div className="text-center">
-                <p>_________________________</p>
-                <p className="mt-2">ผู้รับผิดชอบการแก้ไข</p>
-                <p className="mt-1">วันที่: ____/____/______</p>
-              </div>
+              <p className="mt-1">ประธานในที่ประชุม</p>
             </div>
           </div>
         </div>

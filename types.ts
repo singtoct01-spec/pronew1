@@ -80,6 +80,9 @@ export interface ProductionJob {
   capacityMl?: number;
   startDate: string; // ISO String
   endDate: string; // ISO String
+  actualStartDate?: string; // ISO String
+  actualEndDate?: string; // ISO String
+  delayReason?: string; // Explicit field for root cause of delay
   status: Status;
   note?: string;
   priority?: 'Normal' | 'Urgent'; 

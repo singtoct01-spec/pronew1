@@ -72,8 +72,86 @@ export const DocumentCenter: React.FC<DocumentCenterProps> = ({ onAnalyzeFile })
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [previewDoc, setPreviewDoc] = useState<AppDocument | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  const [isEditingText, setIsEditingText] = useState(false);
+  const [editedText, setEditedText] = useState('');
+  const [isSavingText, setIsSavingText] = useState(false);
   const [deleteConfirmDoc, setDeleteConfirmDoc] = useState<AppDocument | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleSaveText = async () => {
+    if (!previewDoc) return;
+    setIsSavingText(true);
+    try {
+      await setDoc(doc(db, 'documents', previewDoc.id), {
+        ...previewDoc,
+        parsedContent: editedText
+      });
+      setPreviewDoc({ ...previewDoc, parsedContent: editedText });
+      setIsEditingText(false);
+      alert('บันทึกการแก้ไขเรียบร้อยแล้ว');
+    } catch (error) {
+      console.error("Error saving text:", error);
+      alert('เกิดข้อผิดพลาดในการบันทึก');
+    } finally {
+      setIsSavingText(false);
+    }
+  };
+
+  useEffect(() => {
+    const loadPreview = async () => {
+      if (!previewDoc) {
+        setPreviewUrl(null);
+        return;
+      }
+
+      setIsLoadingPreview(true);
+      try {
+        let url = previewDoc.url;
+        if (url.startsWith('firestore-chunked://')) {
+          const parts = url.replace('firestore-chunked://', '').split('|');
+          const docId = parts[0];
+          const totalChunks = parseInt(parts[1], 10);
+          const mimeType = parts[2] || 'application/octet-stream';
+          
+          const byteNumbers: number[] = [];
+          for (let i = 0; i < totalChunks; i++) {
+            const chunkDoc = await getDoc(doc(db, 'document_chunks', `${docId}_${i}`));
+            if (chunkDoc.exists()) {
+              const chunkBase64 = chunkDoc.data().data;
+              try {
+                const byteCharacters = atob(chunkBase64);
+                for (let j = 0; j < byteCharacters.length; j++) {
+                  byteNumbers.push(byteCharacters.charCodeAt(j));
+                }
+              } catch (e) {
+                console.error("Error decoding chunk", i, e);
+              }
+            }
+          }
+          
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], { type: mimeType });
+          url = URL.createObjectURL(blob);
+        }
+        setPreviewUrl(url);
+      } catch (error) {
+        console.error("Error loading preview URL:", error);
+      } finally {
+        setIsLoadingPreview(false);
+      }
+    };
+
+    loadPreview();
+
+    // Cleanup blob URL
+    return () => {
+      if (previewUrl && previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewDoc]);
 
   useEffect(() => {
     const q = query(collection(db, 'documents'), orderBy('uploadedAt', 'desc'));
@@ -95,7 +173,7 @@ export const DocumentCenter: React.FC<DocumentCenterProps> = ({ onAnalyzeFile })
     setUploadProgress(10); // Show initial progress
 
     try {
-      const fileArray = Array.from(files);
+      const fileArray = Array.from(files) as File[];
       const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
       
       for (let index = 0; index < fileArray.length; index++) {
@@ -281,15 +359,25 @@ export const DocumentCenter: React.FC<DocumentCenterProps> = ({ onAnalyzeFile })
         const totalChunks = parseInt(parts[1], 10);
         const mimeType = parts[2] || 'application/octet-stream';
         
-        let fullBase64 = '';
+        const byteNumbers: number[] = [];
         for (let i = 0; i < totalChunks; i++) {
           const chunkDoc = await getDoc(doc(db, 'document_chunks', `${docId}_${i}`));
           if (chunkDoc.exists()) {
-            fullBase64 += chunkDoc.data().data;
+            const chunkBase64 = chunkDoc.data().data;
+            try {
+              const byteCharacters = atob(chunkBase64);
+              for (let j = 0; j < byteCharacters.length; j++) {
+                byteNumbers.push(byteCharacters.charCodeAt(j));
+              }
+            } catch (e) {
+              console.error("Error decoding chunk", i, e);
+            }
           }
         }
         
-        downloadUrl = `data:${mimeType};base64,${fullBase64}`;
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: mimeType });
+        downloadUrl = URL.createObjectURL(blob);
       }
       
       const a = window.document.createElement('a');
@@ -298,6 +386,10 @@ export const DocumentCenter: React.FC<DocumentCenterProps> = ({ onAnalyzeFile })
       window.document.body.appendChild(a);
       a.click();
       window.document.body.removeChild(a);
+      
+      if (downloadUrl.startsWith('blob:')) {
+        setTimeout(() => URL.revokeObjectURL(downloadUrl), 100);
+      }
     } catch (error) {
       console.error("Error downloading file:", error);
       alert("เกิดข้อผิดพลาดในการดาวน์โหลดไฟล์");
@@ -462,8 +554,8 @@ export const DocumentCenter: React.FC<DocumentCenterProps> = ({ onAnalyzeFile })
 
       {/* Preview Modal */}
       {previewDoc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-6xl h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
             <div className="flex justify-between items-center p-4 border-b border-slate-200 bg-slate-50">
               <div className="flex items-center gap-3">
                 {getFileIcon(previewDoc.name)}
@@ -474,6 +566,7 @@ export const DocumentCenter: React.FC<DocumentCenterProps> = ({ onAnalyzeFile })
                   onClick={() => {
                     onAnalyzeFile(previewDoc);
                     setPreviewDoc(null);
+                    setIsEditingText(false);
                   }}
                   className="flex items-center gap-2 px-3 py-1.5 bg-purple-100 text-purple-700 hover:bg-purple-200 rounded-lg text-sm font-medium transition-colors"
                 >
@@ -481,42 +574,114 @@ export const DocumentCenter: React.FC<DocumentCenterProps> = ({ onAnalyzeFile })
                   วิเคราะห์ด้วย AI
                 </button>
                 <button 
-                  onClick={() => setPreviewDoc(null)}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-lg transition-colors"
+                  onClick={() => handleDownload(previewDoc)}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg text-sm font-medium transition-colors"
+                >
+                  <Download size={16} />
+                  ดาวน์โหลด
+                </button>
+                <button 
+                  onClick={() => {
+                    setPreviewDoc(null);
+                    setIsEditingText(false);
+                  }}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-lg transition-colors ml-2"
                 >
                   <X size={20} />
                 </button>
               </div>
             </div>
             
-            <div className="p-6 overflow-y-auto flex-1 bg-slate-50/50">
-              {previewDoc.parsedContent ? (
-                <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
-                  <h3 className="text-sm font-bold text-slate-700 mb-3 border-b pb-2">
-                    {previewDoc.name.endsWith('.xlsx') || previewDoc.name.endsWith('.xls') || previewDoc.name.endsWith('.csv') 
-                      ? 'ตัวอย่างข้อมูล (Spreadsheet View)' 
-                      : 'ตัวอย่างข้อมูล (Text)'}
-                  </h3>
-                  {previewDoc.name.endsWith('.xlsx') || previewDoc.name.endsWith('.xls') || previewDoc.name.endsWith('.csv') ? (
-                    <SpreadsheetViewer csvContent={previewDoc.parsedContent} />
-                  ) : (
-                    <pre className="text-xs font-mono text-slate-600 whitespace-pre-wrap overflow-x-auto max-h-[60vh]">
-                      {previewDoc.parsedContent}
-                    </pre>
-                  )}
+            <div className="p-0 overflow-hidden flex-1 bg-slate-100 flex flex-col relative">
+              {isLoadingPreview && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-100/80 backdrop-blur-sm">
+                  <div className="flex flex-col items-center">
+                    <div className="w-10 h-10 border-4 border-brand-200 border-t-brand-600 rounded-full animate-spin mb-3"></div>
+                    <p className="text-slate-600 font-medium">กำลังโหลดเอกสาร...</p>
+                  </div>
+                </div>
+              )}
+
+              {previewDoc.name.toLowerCase().endsWith('.pdf') ? (
+                <div className="w-full h-full flex-1">
+                  {previewUrl ? (
+                    <iframe src={`${previewUrl}#toolbar=0`} className="w-full h-full border-0" title="PDF Preview" />
+                  ) : null}
+                </div>
+              ) : previewDoc.name.toLowerCase().match(/\.(jpg|jpeg|png|gif|webp)$/) ? (
+                <div className="w-full h-full flex-1 flex items-center justify-center p-8">
+                  {previewUrl ? (
+                    <img src={previewUrl} alt={previewDoc.name} className="max-w-full max-h-full object-contain shadow-md rounded" />
+                  ) : null}
+                </div>
+              ) : previewDoc.parsedContent ? (
+                <div className="w-full h-full p-6 overflow-y-auto">
+                  <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm h-full flex flex-col">
+                    <div className="flex justify-between items-center mb-3 border-b pb-2">
+                      <h3 className="text-sm font-bold text-slate-700">
+                        {previewDoc.name.endsWith('.xlsx') || previewDoc.name.endsWith('.xls') || previewDoc.name.endsWith('.csv') 
+                          ? 'ตัวอย่างข้อมูล (Spreadsheet View)' 
+                          : 'ตัวอย่างข้อมูล (Text)'}
+                      </h3>
+                      {!(previewDoc.name.endsWith('.xlsx') || previewDoc.name.endsWith('.xls') || previewDoc.name.endsWith('.csv')) && (
+                        <div className="flex gap-2">
+                          {isEditingText ? (
+                            <>
+                              <button 
+                                onClick={() => setIsEditingText(false)}
+                                className="px-3 py-1 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded transition-colors"
+                              >
+                                ยกเลิก
+                              </button>
+                              <button 
+                                onClick={handleSaveText}
+                                disabled={isSavingText}
+                                className="px-3 py-1 text-xs font-medium text-white bg-brand-600 hover:bg-brand-700 rounded transition-colors disabled:opacity-50"
+                              >
+                                {isSavingText ? 'กำลังบันทึก...' : 'บันทึก'}
+                              </button>
+                            </>
+                          ) : (
+                            <button 
+                              onClick={() => {
+                                setEditedText(previewDoc.parsedContent || '');
+                                setIsEditingText(true);
+                              }}
+                              className="px-3 py-1 text-xs font-medium text-brand-600 bg-brand-50 hover:bg-brand-100 rounded transition-colors"
+                            >
+                              แก้ไขข้อความ
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="flex-1 overflow-hidden">
+                      {previewDoc.name.endsWith('.xlsx') || previewDoc.name.endsWith('.xls') || previewDoc.name.endsWith('.csv') ? (
+                        <SpreadsheetViewer csvContent={previewDoc.parsedContent} />
+                      ) : (
+                        <textarea 
+                          className={`w-full h-full p-4 text-sm font-mono text-slate-700 border rounded-lg focus:outline-none resize-none ${isEditingText ? 'bg-white border-brand-300 ring-2 ring-brand-100' : 'bg-slate-50 border-slate-200'}`}
+                          value={isEditingText ? editedText : previewDoc.parsedContent}
+                          onChange={(e) => setEditedText(e.target.value)}
+                          readOnly={!isEditingText}
+                        />
+                      )}
+                    </div>
+                  </div>
                 </div>
               ) : (
-                <div className="flex flex-col items-center justify-center h-64 text-slate-500">
-                  <FileText size={48} className="text-slate-300 mb-4" />
-                  <p>ไม่สามารถแสดงตัวอย่างไฟล์ประเภทนี้ได้</p>
-                  <a 
-                    href={previewDoc.url} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="mt-4 px-4 py-2 bg-brand-50 text-brand-600 rounded-lg hover:bg-brand-100 font-medium transition-colors"
+                <div className="flex flex-col items-center justify-center h-full text-slate-500">
+                  <FileText size={64} className="text-slate-300 mb-4" />
+                  <p className="text-lg font-medium text-slate-600">ไม่สามารถแสดงตัวอย่างไฟล์ประเภทนี้ได้</p>
+                  <p className="text-sm mt-2">กรุณาดาวน์โหลดไฟล์เพื่อเปิดดูในเครื่องของคุณ</p>
+                  <button 
+                    onClick={() => handleDownload(previewDoc)}
+                    className="mt-6 px-6 py-2.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 font-medium transition-colors shadow-sm flex items-center gap-2"
                   >
-                    ดาวน์โหลดเพื่อเปิดดู
-                  </a>
+                    <Download size={18} />
+                    ดาวน์โหลดไฟล์
+                  </button>
                 </div>
               )}
             </div>
