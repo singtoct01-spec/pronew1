@@ -1,8 +1,9 @@
 
 import React, { useState } from 'react';
 import { CustomKnowledge, InventoryItem, ProductBOM, ProductSpec, MachineMoldCapability } from '../types';
-import { Search, Database, Disc, Settings, Weight, Package, Layers, Info, Box, BookOpen, Plus, Trash2, Edit2, Copy, Printer } from 'lucide-react';
+import { Search, Database, Disc, Settings, Weight, Package, Layers, Info, Box, BookOpen, Plus, Trash2, Edit2, Copy, Printer, ScanLine } from 'lucide-react';
 import { BomModal } from './BomModal';
+import { BomScannerView } from './BomScannerView';
 
 interface KnowledgeBaseProps {
   customKnowledge: CustomKnowledge[];
@@ -23,6 +24,7 @@ export const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ customKnowledge, i
   
   // BOM Modal State
   const [isBomModalOpen, setIsBomModalOpen] = useState(false);
+  const [isBomScannerOpen, setIsBomScannerOpen] = useState(false);
   const [editingBom, setEditingBom] = useState<ProductBOM | null>(null);
 
   const handleOpenAddBom = () => {
@@ -78,7 +80,7 @@ export const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ customKnowledge, i
           <td style="padding: 8px; border: 1px solid #ddd;">${item?.name || 'Unknown'}</td>
           <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">${mat.qtyPerUnit}</td>
           <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">${mat.unitType}</td>
-          <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">${cost.toFixed(2)} ฿</td>
+          <td style="padding: 8px; border: 1px solid #ddd; text-align: right;">${Number(cost.toFixed(6))} ฿</td>
         </tr>
       `;
     });
@@ -119,7 +121,7 @@ export const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ customKnowledge, i
               ${materialsHtml}
               <tr class="total-row">
                 <td colspan="4" style="padding: 10px; border: 1px solid #ddd; text-align: right;">ต้นทุนวัตถุดิบรวมต่อชิ้น:</td>
-                <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">${totalCost.toFixed(2)} ฿</td>
+                <td style="padding: 10px; border: 1px solid #ddd; text-align: right;">${Number(totalCost.toFixed(6))} ฿</td>
               </tr>
             </tbody>
           </table>
@@ -202,13 +204,23 @@ export const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ customKnowledge, i
            </div>
            <div className="flex items-center gap-3 w-full md:w-auto">
               {activeTab === 'boms' && (
-                <button 
-                  onClick={handleOpenAddBom}
-                  className="bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-                >
-                  <Plus size={16} />
-                  สร้างสูตรการผลิต
-                </button>
+                <>
+                  <button 
+                    onClick={() => setIsBomScannerOpen(true)}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm"
+                    title="วิเคราะห์เอกสารใบสั่งผลิตด้วย AI"
+                  >
+                    <ScanLine size={16} />
+                    แกะสูตรจากรูป (AI)
+                  </button>
+                  <button 
+                    onClick={handleOpenAddBom}
+                    className="bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                  >
+                    <Plus size={16} />
+                    สร้างสูตรการผลิต
+                  </button>
+                </>
               )}
               <div className="relative w-full md:w-64">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
@@ -452,6 +464,18 @@ export const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ customKnowledge, i
         boms={boms}
         productSpecs={productSpecs}
       />
+
+      {isBomScannerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm overflow-y-auto">
+          <div className="w-full max-w-5xl my-8 relative">
+            <BomScannerView 
+              inventory={inventory} 
+              onAddBom={handleSaveBom} 
+              onClose={() => setIsBomScannerOpen(false)} 
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

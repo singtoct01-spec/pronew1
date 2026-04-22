@@ -229,7 +229,7 @@ export const ProductionPlan: React.FC<ProductionPlanProps> = ({ jobs, inventory,
   const bomMap = React.useMemo(() => {
     const map = new Map<string, ProductBOM>();
     boms.forEach(bom => {
-      map.set((bom.productItem || '').toLowerCase(), bom);
+      map.set(String(bom.productItem || '').toLowerCase(), bom);
     });
     return map;
   }, [boms]);
@@ -248,19 +248,20 @@ export const ProductionPlan: React.FC<ProductionPlanProps> = ({ jobs, inventory,
     }
 
     // 2. If no materials, try to find BOM
-    const jobProductLower = (job.productItem || '').toLowerCase();
+    const jobProductLower = String(job.productItem || '').toLowerCase();
     let bom = bomMap.get(jobProductLower);
     
     // Fallback to partial match if exact match not found
     if (!bom) {
-      bom = boms.find(b => (b.productItem || '').toLowerCase().includes(jobProductLower) || jobProductLower.includes((b.productItem || '').toLowerCase()));
+      bom = boms.find(b => String(b.productItem || '').toLowerCase().includes(jobProductLower) || jobProductLower.includes(String(b.productItem || '').toLowerCase()));
     }
     
     if (bom) {
         for (const mat of bom.materials) {
             const item = inventoryMap.get(mat.inventoryItemId);
             if (item) {
-                const totalQty = mat.qtyPerUnit * (job.totalProduction || 0);
+                const wasteMultiplier = mat.wastePercentage ? (1 + (mat.wastePercentage / 100)) : 1;
+                const totalQty = (mat.qtyPerUnit * (job.totalProduction || 0)) * wasteMultiplier;
                 if (item.currentStock < totalQty) {
                     return { status: 'Shortage', item: item.name };
                 }

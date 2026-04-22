@@ -1,14 +1,18 @@
 import React, { useState, useMemo } from 'react';
 import { ProductionJob } from '../types';
-import { Target, TrendingUp, AlertOctagon, Calendar, CheckCircle2, Clock, BarChart3, PieChart } from 'lucide-react';
+import { Target, TrendingUp, AlertOctagon, Calendar, CheckCircle2, Clock, BarChart3, PieChart, X, FileText } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart as RechartsPieChart, Pie, Cell, LineChart, Line } from 'recharts';
 
 interface PlanningKPIDashboardProps {
   jobs: ProductionJob[];
 }
 
+type MetricType = 'attainment' | 'delay' | 'yield' | 'total' | null;
+
 export const PlanningKPIDashboard: React.FC<PlanningKPIDashboardProps> = ({ jobs }) => {
   const [selectedMonth, setSelectedMonth] = useState<string>(new Date().toISOString().slice(0, 7)); // YYYY-MM
+  const [selectedMetric, setSelectedMetric] = useState<MetricType>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   // Filter jobs by selected month
   const filteredJobs = useMemo(() => {
@@ -81,6 +85,36 @@ export const PlanningKPIDashboard: React.FC<PlanningKPIDashboardProps> = ({ jobs
 
   const COLORS = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#06b6d4', '#3b82f6', '#8b5cf6', '#d946ef'];
 
+  const handleCardClick = (metric: MetricType) => {
+    setSelectedMetric(metric);
+    setIsModalOpen(true);
+  };
+
+  const getDrilldownData = () => {
+    switch (selectedMetric) {
+      case 'attainment':
+        return filteredJobs.filter(j => j.status !== 'Delayed');
+      case 'delay':
+        return filteredJobs.filter(j => j.status === 'Delayed');
+      case 'yield':
+        return filteredJobs.filter(j => j.totalProduction && j.totalProduction > 0);
+      case 'total':
+        return filteredJobs;
+      default:
+        return [];
+    }
+  };
+
+  const getMetricTitle = () => {
+    switch (selectedMetric) {
+      case 'attainment': return 'รายการงานที่ไม่ล่าช้า (On-time Jobs)';
+      case 'delay': return 'รายการงานที่ล่าช้า (Delayed Jobs)';
+      case 'yield': return 'รายละเอียดปริมาณผลิตจริงเทียบแผน (Yield Details)';
+      case 'total': return 'รายการงานทั้งหมดในเดือนนี้ (Total Jobs)';
+      default: return '';
+    }
+  };
+
   return (
     <div className="p-6 max-w-7xl mx-auto font-kanit">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
@@ -103,7 +137,10 @@ export const PlanningKPIDashboard: React.FC<PlanningKPIDashboardProps> = ({ jobs
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200 flex flex-col">
+        <div 
+          onClick={() => handleCardClick('attainment')}
+          className="bg-white rounded-xl p-6 shadow-sm border border-slate-200 flex flex-col cursor-pointer hover:border-brand-400 hover:shadow-md transition-all"
+        >
           <div className="flex justify-between items-start mb-4">
             <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
               <CheckCircle2 size={24} />
@@ -117,7 +154,10 @@ export const PlanningKPIDashboard: React.FC<PlanningKPIDashboardProps> = ({ jobs
           <p className="text-xs text-slate-500 mt-auto">สัดส่วนงานที่ทำเสร็จตรงตามเวลาที่วางแผนไว้</p>
         </div>
 
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200 flex flex-col">
+        <div 
+          onClick={() => handleCardClick('delay')}
+          className="bg-white rounded-xl p-6 shadow-sm border border-slate-200 flex flex-col cursor-pointer hover:border-red-400 hover:shadow-md transition-all"
+        >
           <div className="flex justify-between items-start mb-4">
             <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center text-red-600">
               <AlertOctagon size={24} />
@@ -131,7 +171,10 @@ export const PlanningKPIDashboard: React.FC<PlanningKPIDashboardProps> = ({ jobs
           <p className="text-xs text-slate-500 mt-auto">สัดส่วนงานที่ล่าช้ากว่าแผน ({kpis.totalDelayed} จาก {kpis.totalPlanned} งาน)</p>
         </div>
 
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200 flex flex-col">
+        <div 
+          onClick={() => handleCardClick('yield')}
+          className="bg-white rounded-xl p-6 shadow-sm border border-slate-200 flex flex-col cursor-pointer hover:border-blue-400 hover:shadow-md transition-all"
+        >
           <div className="flex justify-between items-start mb-4">
             <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
               <TrendingUp size={24} />
@@ -145,7 +188,10 @@ export const PlanningKPIDashboard: React.FC<PlanningKPIDashboardProps> = ({ jobs
           <p className="text-xs text-slate-500 mt-auto">ปริมาณผลิตจริง {kpis.totalActualQty.toLocaleString()} / แผน {kpis.totalPlannedQty.toLocaleString()}</p>
         </div>
 
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-200 flex flex-col">
+        <div 
+          onClick={() => handleCardClick('total')}
+          className="bg-white rounded-xl p-6 shadow-sm border border-slate-200 flex flex-col cursor-pointer hover:border-purple-400 hover:shadow-md transition-all"
+        >
           <div className="flex justify-between items-start mb-4">
             <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center text-purple-600">
               <Clock size={24} />
@@ -219,6 +265,98 @@ export const PlanningKPIDashboard: React.FC<PlanningKPIDashboardProps> = ({ jobs
           </div>
         </div>
       </div>
+
+      {/* Drill-down Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="flex justify-between items-center p-6 border-b border-slate-200">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <FileText className="text-brand-500" />
+                {getMetricTitle()}
+              </h2>
+              <button 
+                onClick={() => setIsModalOpen(false)}
+                className="text-slate-400 hover:text-red-500 p-2 rounded-full hover:bg-slate-100 transition-colors"
+              >
+                <X size={24} />
+              </button>
+            </div>
+            
+            <div className="p-6 overflow-y-auto flex-1 bg-slate-50">
+              {getDrilldownData().length > 0 ? (
+                <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm text-left">
+                      <thead className="bg-slate-50 text-slate-600 font-medium border-b border-slate-200">
+                        <tr>
+                          <th className="px-4 py-3">เลขที่ใบสั่งผลิต</th>
+                          <th className="px-4 py-3">เครื่องจักร</th>
+                          <th className="px-4 py-3">สินค้า</th>
+                          <th className="px-4 py-3">ยอดแผน</th>
+                          {selectedMetric === 'yield' && <th className="px-4 py-3 text-brand-600">ยอดจริง</th>}
+                          <th className="px-4 py-3 text-center">เริ่ม</th>
+                          <th className="px-4 py-3 text-center">จบ</th>
+                          <th className="px-4 py-3 text-center">สถานะ</th>
+                          {(selectedMetric === 'delay' || selectedMetric === 'total') && (
+                            <th className="px-4 py-3">หมายเหตุ/สาเหตุ</th>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {getDrilldownData().map(job => (
+                          <tr key={job.id} className="hover:bg-slate-50">
+                            <td className="px-4 py-3 font-medium text-brand-600">{job.jobOrder}</td>
+                            <td className="px-4 py-3 font-bold">{job.machineId}</td>
+                            <td className="px-4 py-3 text-slate-700">{job.productItem}</td>
+                            <td className="px-4 py-3">{job.totalProduction?.toLocaleString()}</td>
+                            {selectedMetric === 'yield' && (
+                              <td className="px-4 py-3 font-bold text-brand-600">
+                                {job.actualProduction?.toLocaleString() || 0}
+                              </td>
+                            )}
+                            <td className="px-4 py-3 text-center text-slate-500">
+                              {new Date(job.startDate).toLocaleDateString('th-TH')}
+                            </td>
+                            <td className="px-4 py-3 text-center text-slate-500">
+                              {new Date(job.endDate).toLocaleDateString('th-TH')}
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <span className={`px-2 py-1 rounded text-xs font-bold ${
+                                job.status === 'Completed' ? 'bg-emerald-100 text-emerald-700' :
+                                job.status === 'Running' ? 'bg-blue-100 text-blue-700' :
+                                job.status === 'Delayed' ? 'bg-red-100 text-red-700' :
+                                'bg-slate-100 text-slate-700'
+                              }`}>
+                                {job.status}
+                              </span>
+                            </td>
+                            {(selectedMetric === 'delay' || selectedMetric === 'total') && (
+                              <td className="px-4 py-3 text-xs text-red-600">
+                                {job.delayReason || job.remarks || '-'}
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+                  <FileText size={48} className="mb-4 text-slate-300" />
+                  <p>ไม่มีข้อมูลรายการงานในหมวดหมู่นี้</p>
+                </div>
+              )}
+            </div>
+            
+            <div className="p-4 border-t border-slate-200 flex justify-between items-center text-sm text-slate-500">
+              <span>แสดงผลสถิติของเดือน <span className="font-bold text-slate-700">{selectedMonth}</span></span>
+              <span>รวมทั้งหมด <span className="font-bold text-brand-600">{getDrilldownData().length}</span> รายการ</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

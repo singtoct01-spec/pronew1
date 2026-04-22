@@ -22,6 +22,8 @@ export interface RawMaterial {
   name: string;
   qtyPcs: number;
   qtyKg: number;
+  wastePercentage?: number; // Added to calculate waste
+  bomQtyPerUnit?: number; // Original qty per unit from BOM
   unit: string;
   lotNo: string;
   remarks: string;
@@ -50,6 +52,7 @@ export interface ProductBOM {
   materials: {
     inventoryItemId: string;
     qtyPerUnit: number; 
+    wastePercentage?: number; // Master waste tolerance
     unitType: 'pcs' | 'kg' | string;
     alternativeItemId?: string;
     alternativeRatio?: number;

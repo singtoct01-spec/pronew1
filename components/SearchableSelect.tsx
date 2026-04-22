@@ -99,8 +99,9 @@ export function SearchableSelect({
       >
         <input
           ref={inputRef}
+          title={searchTerm}
           type="text"
-          className="w-full p-2.5 text-sm outline-none bg-transparent truncate"
+          className="w-full p-1.5 pl-2 text-[11px] sm:text-xs md:text-sm outline-none bg-transparent truncate flex-1 min-w-0"
           placeholder={placeholder}
           value={searchTerm}
           onChange={handleInputChange}
@@ -124,22 +125,22 @@ export function SearchableSelect({
           }}
         />
         
-        <div className="flex items-center pr-2 gap-1">
+        <div className="flex items-center pr-1.5 gap-0.5 flex-shrink-0">
           {value && !disabled && (
             <button
               type="button"
               onClick={clearSelection}
-              className="p-1 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition-colors"
+              className="p-1 pl-1.5 text-slate-400 hover:text-slate-600 rounded-full transition-colors flex-shrink-0 flex"
             >
               <X size={14} />
             </button>
           )}
-          <ChevronDown size={16} className={`text-slate-400 flex-shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+          <ChevronDown size={14} className={`text-slate-400 flex-shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </div>
       </div>
 
       {isOpen && !disabled && filteredOptions.length > 0 && (
-        <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg flex flex-col overflow-hidden max-h-60">
+        <div className="absolute z-50 min-w-full w-max max-w-[85vw] sm:max-w-md mt-1 bg-white border border-slate-200 rounded-lg shadow-lg flex flex-col overflow-hidden max-h-60 whitespace-normal">
           <div className="overflow-y-auto p-1">
             {filteredOptions.map((opt) => (
               <div
@@ -160,7 +161,7 @@ export function SearchableSelect({
                   inputRef.current?.blur();
                 }}
               >
-                <span className="truncate">{opt.label}</span>
+                <span className="block break-words">{opt.label}</span>
                 {value === opt.value && <Check size={16} className="text-brand-600 flex-shrink-0 ml-2" />}
               </div>
             ))}

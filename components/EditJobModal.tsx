@@ -92,10 +92,84 @@ export const EditJobModal: React.FC<EditJobModalProps> = ({ isOpen, onClose, job
   };
 
   const updateMaterial = (id: string, field: keyof RawMaterial, value: any) => {
-    setFormData(prev => ({
-      ...prev,
-      materials: (prev.materials || []).map(m => m.id === id ? { ...m, [field]: value } : m)
-    }));
+    setFormData(prev => {
+      const materials = prev.materials || [];
+      const updatedIndex = materials.findIndex(m => m.id === id);
+      if (updatedIndex === -1) return prev;
+      
+      const newMaterials = [...materials];
+      const m = newMaterials[updatedIndex];
+      const newValue = value as number;
+      
+      newMaterials[updatedIndex] = { ...m, [field]: value };
+      
+      let newTarget = prev.totalProduction;
+      
+      // If we updated quantity and it has a bom definition, we can reverse calculate the target
+      if ((field === 'qtyKg' || field === 'qtyPcs') && m.bomQtyPerUnit && newValue >= 0) {
+         const wasteMultiplier = m.wastePercentage ? (1 + (m.wastePercentage / 100)) : 1;
+         const baseQty = newValue / wasteMultiplier;
+         if (field === 'qtyPcs' || field === 'qtyKg') { // Prevent division by zero if bomQtyPerUnit is 0
+           newTarget = m.bomQtyPerUnit > 0 ? Math.round(baseQty / m.bomQtyPerUnit) : prev.totalProduction;
+         }
+         
+         // Sync other materials based on the new target
+         if (newTarget !== prev.totalProduction) {
+           newMaterials.forEach((otherMat, idx) => {
+              if (idx !== updatedIndex && otherMat.bomQtyPerUnit) {
+                 const otherBaseQty = otherMat.bomQtyPerUnit * (newTarget || 0);
+                 const otherWasteMultiplier = otherMat.wastePercentage ? (1 + (otherMat.wastePercentage / 100)) : 1;
+                 const otherTotal = otherBaseQty * otherWasteMultiplier;
+                 if (otherMat.unit === 'ชิ้น') {
+                    newMaterials[idx] = { ...otherMat, qtyPcs: Math.ceil(otherTotal) };
+                 } else if (otherMat.unit === 'กก.') {
+                    newMaterials[idx] = { ...otherMat, qtyKg: parseFloat(otherTotal.toFixed(2)) };
+                 }
+              }
+           });
+         }
+      }
+
+      // If we updated wastePercentage, just recalculate this specific material based on current target
+      if (field === 'wastePercentage' && m.bomQtyPerUnit !== undefined) {
+         const baseQty = m.bomQtyPerUnit * (prev.totalProduction || 0);
+         const wasteMultiplier = newValue ? (1 + (newValue / 100)) : 1;
+         const totalQtyWithWaste = baseQty * wasteMultiplier;
+         newMaterials[updatedIndex] = {
+             ...newMaterials[updatedIndex],
+             qtyPcs: m.unit === 'ชิ้น' ? Math.ceil(totalQtyWithWaste) : newMaterials[updatedIndex].qtyPcs,
+             qtyKg: m.unit === 'กก.' ? parseFloat(totalQtyWithWaste.toFixed(2)) : newMaterials[updatedIndex].qtyKg,
+         };
+      }
+
+      return {
+        ...prev,
+        totalProduction: newTarget,
+        materials: newMaterials
+      };
+    });
+  };
+
+  const updateTargetProduction = (target: number) => {
+    setFormData(prev => {
+      const newForm = { ...prev, totalProduction: target };
+      if (prev.materials && prev.materials.length > 0) {
+        newForm.materials = prev.materials.map(m => {
+          if (m.bomQtyPerUnit !== undefined) {
+            const baseQty = m.bomQtyPerUnit * target;
+            const wasteMultiplier = m.wastePercentage ? (1 + (m.wastePercentage / 100)) : 1;
+            const totalQtyWithWaste = baseQty * wasteMultiplier;
+            return {
+              ...m,
+              qtyPcs: m.unit === 'ชิ้น' ? Math.ceil(totalQtyWithWaste) : m.qtyPcs,
+              qtyKg: m.unit === 'กก.' ? parseFloat(totalQtyWithWaste.toFixed(2)) : m.qtyKg,
+            };
+          }
+          return m;
+        });
+      }
+      return newForm;
+    });
   };
 
   const removeMaterial = (id: string) => {
@@ -111,19 +185,19 @@ export const EditJobModal: React.FC<EditJobModalProps> = ({ isOpen, onClose, job
     const target = targetOverride !== undefined ? targetOverride : (formData.totalProduction || 0);
     
     const searchTerms = [
-        `${product} (${color})`.trim().toLowerCase(),
-        `${product} ${color}`.trim().toLowerCase(),
-        (product || '').toLowerCase()
+        String(`${product} (${color})`).trim().toLowerCase(),
+        String(`${product} ${color}`).trim().toLowerCase(),
+        String(product || '').toLowerCase()
     ];
 
     let bom: ProductBOM | undefined;
     for (const term of searchTerms) {
-        bom = boms.find(b => (b.productItem || '').toLowerCase() === term); 
+        bom = boms.find(b => String(b.productItem || '').toLowerCase() === term); 
         if (bom) break;
     }
     
     if (!bom) {
-         bom = boms.find(b => (b.productItem || '').toLowerCase().includes((product || '').toLowerCase()));
+         bom = boms.find(b => String(b.productItem || '').toLowerCase().includes(String(product || '').toLowerCase()));
     }
 
     if (!bom) {
@@ -133,14 +207,18 @@ export const EditJobModal: React.FC<EditJobModalProps> = ({ isOpen, onClose, job
 
     const newMaterials: RawMaterial[] = bom.materials.map(mat => {
       const inventoryItem = inventory.find(i => i.id === mat.inventoryItemId);
-      const totalQty = mat.qtyPerUnit * target;
+      const baseQty = mat.qtyPerUnit * target;
+      const wasteMultiplier = mat.wastePercentage ? (1 + (mat.wastePercentage / 100)) : 1;
+      const totalQtyWithWaste = baseQty * wasteMultiplier;
 
       return {
         id: Math.random().toString(36).substr(2, 9),
         inventoryItemId: mat.inventoryItemId,
         name: inventoryItem ? `${inventoryItem.code} (${inventoryItem.name})` : 'Unknown Material',
-        qtyPcs: mat.unitType === 'pcs' ? Math.ceil(totalQty) : 0,
-        qtyKg: mat.unitType === 'kg' ? parseFloat(totalQty.toFixed(2)) : 0,
+        qtyPcs: mat.unitType === 'pcs' ? Math.ceil(totalQtyWithWaste) : 0,
+        qtyKg: mat.unitType === 'kg' ? parseFloat(totalQtyWithWaste.toFixed(2)) : 0,
+        wastePercentage: mat.wastePercentage,
+        bomQtyPerUnit: mat.qtyPerUnit,
         unit: mat.unitType === 'pcs' ? 'ชิ้น' : 'กก.',
         lotNo: '',
         remarks: 'Auto-filled from BOM'
@@ -158,7 +236,7 @@ export const EditJobModal: React.FC<EditJobModalProps> = ({ isOpen, onClose, job
 
     const sortedSpecs = [...productSpecs].sort((a, b) => b.code.length - a.code.length);
     const matchedSpec = sortedSpecs.find(spec => 
-        (formData.productItem || '').toLowerCase().includes((spec.code || '').toLowerCase())
+        String(formData.productItem || '').toLowerCase().includes(String(spec.code || '').toLowerCase())
     );
 
     if (matchedSpec) {
@@ -343,8 +421,8 @@ export const EditJobModal: React.FC<EditJobModalProps> = ({ isOpen, onClose, job
                 />
                 {showProductDropdown && (
                   <div className="absolute z-20 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                    {boms.filter(b => (b.productItem || '').toLowerCase().includes((productSearch || '').toLowerCase())).length > 0 ? (
-                      boms.filter(b => (b.productItem || '').toLowerCase().includes((productSearch || '').toLowerCase())).map((bom, idx) => (
+                    {boms.filter(b => String(b.productItem || '').toLowerCase().includes(String(productSearch || '').toLowerCase())).length > 0 ? (
+                      boms.filter(b => String(b.productItem || '').toLowerCase().includes(String(productSearch || '').toLowerCase())).map((bom, idx) => (
                         <div 
                           key={idx}
                           className="px-3 py-2 hover:bg-brand-50 cursor-pointer text-sm border-b border-slate-100 last:border-0"
@@ -419,12 +497,7 @@ export const EditJobModal: React.FC<EditJobModalProps> = ({ isOpen, onClose, job
                   value={formData.totalProduction || ''} 
                   onChange={e => {
                     const newTarget = parseInt(e.target.value) || 0;
-                    setFormData(prev => ({ ...prev, totalProduction: newTarget }));
-                    
-                    // Auto recalculate BOM if materials exist and seem to be from BOM
-                    if (formData.materials && formData.materials.length > 0 && formData.materials.some(m => m.remarks === 'Auto-filled from BOM')) {
-                      autoFillMaterialsFromBOM(formData.productItem, formData.color, newTarget);
-                    }
+                    updateTargetProduction(newTarget);
                   }} 
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold text-brand-700" 
                   required 
@@ -557,9 +630,10 @@ export const EditJobModal: React.FC<EditJobModalProps> = ({ isOpen, onClose, job
                 const isShortage = inventoryItem && currentStock < requiredQty;
 
                 return (
-                <div key={m.id} className={`grid grid-cols-1 md:grid-cols-12 gap-2 p-2 rounded-lg border ${isShortage ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
-                  <div className="md:col-span-1 flex items-center justify-center font-bold text-slate-400">{idx + 1}</div>
-                  <div className="md:col-span-3">
+                <div key={m.id} className={`flex flex-col xl:flex-row gap-2 p-2 rounded-lg border ${isShortage ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
+                  <div className="hidden xl:flex items-center justify-center font-bold text-slate-400 w-6 shrink-0">{idx + 1}</div>
+                  
+                  <div className="flex-1 min-w-0">
                     <SearchableSelect
                       options={inventory.filter(i => i.category !== 'FG').map(i => ({ value: i.id, label: `[${i.code}] ${i.name}` }))}
                       value={m.inventoryItemId || ''}
@@ -591,18 +665,27 @@ export const EditJobModal: React.FC<EditJobModalProps> = ({ isOpen, onClose, job
                         </div>
                     )}
                   </div>
-                  <div className="md:col-span-2">
-                    <input type="number" placeholder="กก." value={m.qtyKg > 0 ? m.qtyKg : m.qtyPcs} onChange={e => updateMaterial(m.id, m.qtyKg > 0 ? 'qtyKg' : 'qtyPcs', parseFloat(e.target.value))} className={`w-full text-xs p-1.5 border rounded font-bold ${isShortage ? 'text-red-700 border-red-300 bg-red-100' : 'border-slate-300'}`} />
-                    <span className="text-[10px] text-slate-400 block text-right">{m.unit}</span>
-                  </div>
-                  <div className="md:col-span-2">
-                    <input type="text" placeholder="LOT NO." value={m.lotNo} onChange={e => updateMaterial(m.id, 'lotNo', e.target.value)} className="w-full text-xs p-1.5 border border-slate-300 rounded" />
-                  </div>
-                  <div className="md:col-span-3">
-                    <input type="text" placeholder="หมายเหตุ" value={m.remarks} onChange={e => updateMaterial(m.id, 'remarks', e.target.value)} className="w-full text-xs p-1.5 border border-slate-300 rounded" />
-                  </div>
-                  <div className="md:col-span-1 flex items-center justify-end">
-                    <button type="button" onClick={() => removeMaterial(m.id)} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={16}/></button>
+                  
+                  <div className="flex flex-row gap-2 shrink-0">
+                    <div className="w-16 border-r border-slate-200 pr-2">
+                      <input type="number" placeholder="เผื่อ(%)" value={m.wastePercentage || ''} onChange={e => updateMaterial(m.id, 'wastePercentage', parseFloat(e.target.value))} className="w-full text-xs p-1.5 border border-slate-300 rounded text-center" title="เปอร์เซ็นต์เผื่อสูญเสีย (%)" />
+                      <span className="text-[10px] text-slate-400 block text-center mt-0.5 truncate leading-tight" title="เผื่อเสีย %">เผื่อเสีย %</span>
+                    </div>
+                    <div className="w-20">
+                      <input type="number" placeholder="กก." value={m.qtyKg > 0 ? m.qtyKg : m.qtyPcs} onChange={e => updateMaterial(m.id, m.qtyKg > 0 ? 'qtyKg' : 'qtyPcs', parseFloat(e.target.value))} className={`w-full text-xs p-1.5 border rounded font-bold ${isShortage ? 'text-red-700 border-red-300 bg-red-100' : 'border-slate-300'}`} />
+                      <span className="text-[10px] text-slate-400 block text-right">{m.unit}</span>
+                    </div>
+                    <div className="w-24">
+                      <input type="text" placeholder="LOT NO." value={m.lotNo} onChange={e => updateMaterial(m.id, 'lotNo', e.target.value)} className="w-full text-xs p-1.5 border border-slate-300 rounded" />
+                    </div>
+                    <div className="w-24">
+                      <input type="text" placeholder="หมายเหตุ" value={m.remarks === 'Auto-filled from BOM' ? '' : m.remarks} onChange={e => updateMaterial(m.id, 'remarks', e.target.value)} className="w-full text-xs p-1.5 border border-slate-300 rounded" title={m.remarks} />
+                    </div>
+                    <div className="w-8 flex justify-center">
+                      <button type="button" onClick={() => removeMaterial(m.id)} className="text-red-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-lg transition-colors aspect-square h-fit" title="ลบรายการนี้">
+                        <Trash2 size={16}/>
+                      </button>
+                    </div>
                   </div>
                 </div>
               )})}

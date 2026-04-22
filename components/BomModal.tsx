@@ -15,7 +15,7 @@ interface BomModalProps {
 
 export const BomModal: React.FC<BomModalProps> = ({ isOpen, onClose, onSave, initialData, inventory, boms, productSpecs = [] }) => {
   const [productItem, setProductItem] = useState('');
-  const [materials, setMaterials] = useState<{ inventoryItemId: string; qtyPerUnit: number; unitType: string; alternativeItemId?: string; alternativeRatio?: number }[]>([]);
+  const [materials, setMaterials] = useState<{ inventoryItemId: string; qtyPerUnit: number; wastePercentage?: number; unitType: string; alternativeItemId?: string; alternativeRatio?: number }[]>([]);
   const [selectedBomToCopy, setSelectedBomToCopy] = useState<string>('');
   const [version, setVersion] = useState<number>(1);
   const [imageUrl, setImageUrl] = useState<string>('');
@@ -354,11 +354,23 @@ export const BomModal: React.FC<BomModalProps> = ({ isOpen, onClose, onSave, ini
                             type="number"
                             required
                             min="0"
-                            step="0.0001"
+                            step="any"
                             value={mat.qtyPerUnit || ''}
                             onChange={(e) => handleMaterialChange(index, 'qtyPerUnit', Number(e.target.value))}
                             className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 text-sm"
                             placeholder="ปริมาณ"
+                          />
+                        </div>
+                        <div className="w-full sm:w-24">
+                          <label className="block text-xs font-medium text-slate-500 mb-1">เผื่อสูญเสีย (%)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={mat.wastePercentage || ''}
+                            onChange={(e) => handleMaterialChange(index, 'wastePercentage', Number(e.target.value))}
+                            className="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 text-sm"
+                            placeholder="เผื่อเสีย %"
                           />
                         </div>
                         <div className="w-full sm:w-24">
@@ -377,7 +389,7 @@ export const BomModal: React.FC<BomModalProps> = ({ isOpen, onClose, onSave, ini
                           <label className="block text-xs font-medium text-slate-500 mb-1">ต้นทุน (฿)</label>
                           <input
                             type="text"
-                            value={cost > 0 ? cost.toFixed(4) : '-'}
+                            value={cost > 0 ? Number(cost.toFixed(6)) : '-'}
                             className="w-full p-2 border border-slate-300 rounded-lg text-sm bg-slate-100 text-slate-600"
                             readOnly
                           />
@@ -430,10 +442,10 @@ export const BomModal: React.FC<BomModalProps> = ({ isOpen, onClose, onSave, ini
                     <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 flex items-center gap-4">
                       <div className="text-emerald-800 font-medium">ต้นทุนวัตถุดิบรวมโดยประมาณ:</div>
                       <div className="text-2xl font-bold text-emerald-600">
-                        ฿{materials.reduce((total, mat) => {
+                        ฿{Number(materials.reduce((total, mat) => {
                           const item = inventory.find(i => i.id === mat.inventoryItemId);
                           return total + ((item?.unitPrice || 0) * mat.qtyPerUnit);
-                        }, 0).toFixed(4)}
+                        }, 0).toFixed(6))}
                       </div>
                       <div className="text-sm text-emerald-600">/ ชิ้น</div>
                     </div>
