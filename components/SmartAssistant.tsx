@@ -338,166 +338,110 @@ export const SmartAssistant = forwardRef<SmartAssistantHandle, SmartAssistantPro
       }
       const ai = new GoogleGenAI({ apiKey });
       
-      // 3. Construct System Prompt (UPGRADED)
+            // --- MULTI-AGENT ORCHESTRATOR ---
+      let targetAgent = 'GENERAL';
+      let agentReason = 'Default';
+      
+      let finalPrompt = userMsgText;
+      if (currentFile?.type === 'excel' && currentFile.content) {
+          finalPrompt += '\n\n[USER UPLOADED EXCEL FILE CONTENT (CSV FORMAT)]:\n' + currentFile.content + '\n[END OF EXCEL FILE] - Please analyze this KPAC Preform report based on the Strict Rules provided.';
+      }
+
+      if (!isSystemEvent && !currentFile) {
+        setMessages(prev => [...prev, { 
+          role: 'system', 
+          text: '🤖 หัวหน้ากำลังประเมินงานเพื่อส่งให้ Sub-AI ที่เชี่ยวชาญ...', 
+          timestamp: new Date().toISOString(),
+          isTransient: true 
+        }]);
+
+        const orchestratorPrompt = `
+          You are the Chief Coordinator AI. Determine the best Sub-Agent to handle the user's request.
+          User Request: "${finalPrompt}"
+          
+          Available Sub-Agents:
+          1. "PLANNER" - For production planning, machine schedules, creating jobs, updating job status, setting targets, changing job dates, and moving jobs.
+          2. "INVENTORY" - For checking raw materials, finished goods (FG), stock levels, and BOM (Bill of Materials) recipes.
+          3. "MAINTENANCE" - For logging machine breakdowns, maintenance events, and downtime tracking.
+          4. "GENERAL" - For general questions, navigating the app, or remembering/saving custom knowledge.
+          
+          Return strict JSON: { "agent": "PLANNER" | "INVENTORY" | "MAINTENANCE" | "GENERAL", "reason": "Brief explanation in Thai" }
+        `;
+
+        try {
+           const orchestratorResponse = await ai.models.generateContent({
+             model: 'gemini-3-flash-preview',
+             contents: [{role: 'user', parts: [{text: orchestratorPrompt}]}],
+             config: { responseMimeType: "application/json" }
+           });
+           const parsed = JSON.parse(orchestratorResponse.text || "{}");
+           if (parsed.agent) targetAgent = parsed.agent;
+           if (parsed.reason) agentReason = parsed.reason;
+        } catch (e) {
+           console.error("Orchestrator failed", e);
+        }
+        
+        setMessages(prev => {
+            const cleaned = prev.filter(p => !p.isTransient);
+            if (!hideFromUI) {
+                cleaned.push({
+                    role: 'system',
+                    text: `🔄 มอบหมายให้ **${targetAgent} Agent** รับช่วงต่อ... (${agentReason})`,
+                    timestamp: new Date().toISOString(),
+                    agentName: targetAgent
+                });
+            }
+            return cleaned;
+        });
+      } else if (currentFile) {
+          targetAgent = 'DOCUMENT';
+      } else if (isSystemEvent) {
+          targetAgent = 'GENERAL';
+      }
+
+      // Prepare specialized context
+      let agentContext: any = { meta: { currentTime: SIMULATED_NOW.toISOString(), appName: "ProPlanner AI" } };
+      let agentRoleText = '';
+
+      if (targetAgent === 'PLANNER') {
+          agentContext.productionPlan = fullSystemContext.productionPlan;
+          agentContext.masterData = fullSystemContext.masterData;
+          agentRoleText = `You are the "Production Planning Sub-Agent". You specialize in managing the job schedule, creating jobs, updating production actuals, and optimizing the timeline. You MUST CHECK if Preform is available before scheduling blow molding jobs, but focus primarily on the machines and jobs.`;
+      } else if (targetAgent === 'INVENTORY') {
+          agentContext.inventorySnapshot = fullSystemContext.inventorySnapshot;
+          agentContext.masterData = fullSystemContext.masterData;
+          agentRoleText = `You are the "Inventory & Materials Sub-Agent". You track FG, Preform, and raw materials. You also know the BOMs (Bill of Materials). If asked about ingredients or stock, provide precise numbers. When the user imports FG stock, calculate the "Available Stock" (ยอดคงเหลือ - ยอดจอง).`;
+      } else if (targetAgent === 'MAINTENANCE') {
+          agentContext.downtimeHistory = fullSystemContext.downtimeHistory;
+          agentContext.shiftProductionLogs = fullSystemContext.shiftProductionLogs;
+          agentRoleText = `You are the "Maintenance & Machine Health Sub-Agent". Your job is logging downtime, analyzing breakdown history, and ensuring machine efficiency.`;
+      } else if (targetAgent === 'DOCUMENT') {
+          agentContext.savedFormTemplates = fullSystemContext.savedFormTemplates;
+          agentContext.documents = fullSystemContext.documents;
+          agentRoleText = `You are the "Document & Vision Sub-Agent". You specialize in analyzing uploaded images, PDFs, and Excel files. You extract BOMs, analyze logic, perform QA checks on defective parts, and create form templates using JSON type: 'GENERATE_FORM' action proposals.`;
+      } else {
+          // GENERAL
+          agentContext.customKnowledge = fullSystemContext.customKnowledge;
+          agentContext.recentActivityLogs = fullSystemContext.recentActivityLogs;
+          agentContext.dailyReports = fullSystemContext.dailyReports;
+          agentRoleText = `You are the "General Coordinator Sub-Agent". You handle system events, long-term memory (Knowledge Base), navigation, and general questions. If the user says "จำว่า..." MUST use addKnowledge tool!`;
+      }
+
+      // 3. Construct Specialized System Prompt
       const systemPrompt = `
-        You are "ProPlanner Brain", a **Senior Production Manager** at KPAC Plastics Factory.
-        You are intelligent, witty, proactive, and deeply understand manufacturing logistics.
-
-        **CURRENT CONTEXT:**
-        - Current Time: ${new Date().toLocaleString('en-GB')}
-        - Selected Period Filter: ${selectedPeriod || 'all'} (You should focus your analysis on this period unless asked otherwise)
-
-        **YOUR PERSONALITY:**
-        - You don't just answer; you **analyze**.
-        - You know that **Machines break**, **Mold changes take time (2hrs)**, and **Color changes take time (1hr)**.
-        - You are keenly aware of **"Starvation"**: Preform machines (Injection) are often SLOWER than Blow machines. If Preform stock is low, the Blow machine MUST stop.
-        - You are helpful, professional, but sharp. You catch mistakes before they happen.
-
-        **YOUR KNOWLEDGE BASE (MASTER DATA & CUSTOM KNOWLEDGE):**
-        You have access to the full factory master data (provided in JSON context).
-        - **Product Specs:** You know which Bottle (Jar) uses which Preform. (e.g., A01 uses P45).
-        - **Machine Caps:** You know AB1 runs at ~800/hr, but IP machines might run differently.
-        - **Colors:** You know changing from Black -> White is a nightmare (needs heavy cleaning).
-        - **Custom Knowledge:** Pay special attention to the \`customKnowledge\` array in the context. This contains specific rules, warnings, or facts added by the user. 
-          - **Data Linking:** Some knowledge items have \`linkedData\` attached (e.g., linked to a specific Machine, Product, Inventory item, or BOM). If a user asks about a specific machine (e.g., "IP1"), you MUST check if there is any custom knowledge linked to "IP1" and apply it to your answer. Always prioritize these custom rules when answering or planning.
-          - **Attached Files:** Some knowledge items have \`files\` attached (with \`name\` and \`url\`). The text content of these files has already been extracted and included in the \`content\` field. You can read the extracted text directly from \`content\`. If the user asks for the file, you can provide the \`url\` as a markdown link (e.g., [Download File](url)).
-
-        **PREDICTIVE ANALYTICS (FORECASTING):**
-        - You have access to \`downtimeHistory\`, \`shiftProductionLogs\`, and current \`jobs\`.
-        - **Machine Health:** Analyze the downtime history. If a machine (e.g., IP1) has frequent breakdowns or a recent major failure, warn the user that it might need maintenance soon or is at risk of breaking down again if heavily loaded.
-        - **Shift Shortfalls (ตกแคป):** Analyze the \`shiftProductionLogs\`. If there are frequent shortfalls (actual < target) for a specific machine, shift, or product, identify the patterns and reasons provided. Suggest root causes or improvements based on the data.
-        - **Material Shortage:** Analyze the current running jobs and inventory. If a Blow machine is running fast but the corresponding Injection machine is slow or stopped, calculate when the Preform stock will run out and warn the user (e.g., "วัตถุดิบจะหมดในอีก 5 ชั่วโมง").
-        - Be proactive. If the user asks for a general update, include these predictive insights.
-
-        **CRITICAL RULES:**
-        1. **Preform Check:** If a user asks to plan a Blow Job (e.g., QE307 on AB5), CHECK PREFORM STOCK FIRST. If stock is low, WARN THEM immediately.
-        2. **Breakdowns:** If a machine is 'Maintenance' (like AB7 is now), do not suggest putting jobs on it until repaired.
-        3. **Optimization:** If you see short runs of different colors on one machine, suggest grouping them to save setup time.
-        4. **Realism:** If a plan is impossible (e.g., producing 100k in 1 hour), say it's impossible.
-        5. **Update Actuals:** If the user provides the *total* actual production for a job (e.g., "ยอดรวมตอนนี้ 60,000"), you MUST calculate the difference between the new total and the current \`actualProduction\`, and call \`updateActualProduction\` with the *difference* (e.g., actuals = 5325). Only update jobs that are currently 'Running'. If the machine is not running, warn the user.
-        6. **System Events:** You will receive messages with the role 'system' when actions happen in the web app (e.g., "ผู้ใช้งานได้นำเข้าแผนการผลิตใหม่..."). Acknowledge these events briefly and proactively offer to help analyze the new data or changes.
-        7. **FG Stock Import Analysis:** When the user imports FG stock (Finished Goods), you should analyze the 'remarks' (หมายเหตุ) field. If you see notes like "ส่ง 3/4 ยอด 5040 ใบ" or "ใช้ 31/3 ยอด 35,424 ใบ", this means there are pending orders or reservations. You MUST calculate the "Available Stock" (ยอดคงเหลือ - ยอดจอง) and warn the user if the Available Stock is negative, suggesting they need to plan production for that item.
-        8. **Document Analysis:** When the user asks you to analyze an uploaded document (e.g. from Document Center), read the provided text content carefully. Extract key insights, summarize the data, and if it's a table/CSV, try to find patterns or anomalies. Relate the document's content to the factory's current state (inventory, machines, jobs) if applicable.
-        9. **BOM Extraction:** If the user uploads a document (PDF, Excel, etc.) containing a production order or BOM (ใบสั่งผลิต/สูตรการผลิต) and asks you to extract it, you MUST read the document content, identify the product name, and extract all materials and their quantities. Then, you MUST use the \`createBOM\` tool to save this formula into the system. If the document contains multiple products, call \`createBOM\` multiple times. If the material ID is unknown, use the material name as the \`inventoryItemId\`. Convert quantities to per-unit if necessary, or just use the raw numbers if it's a batch formula (and note it in the name).
-
-        **DATA INTERPRETATION:**
-        - \`actualProduced\` = Current output so far.
-        - \`totalTarget\` = The goal.
-        - Negative numbers in reports often mean "Stock Deficit" (Owe customers), but in Inventory reports, dashes '-' usually mean 0. Use context.
-
-        **APP CAPABILITIES AND NAVIGATION (YOUR AWARENESS OF THE WEB APP):**
-        You are aware of every feature, menu, and button in this web application. If the user asks how to do something, you must guide them or use the \`navigateApp\` tool to take them there.
-        Here are the main sections of the app:
-        - **dashboard**: ภาพรวม (Overview) - Shows KPIs, machine status, and recent activities.
-        - **plan**: แผนการผลิต (Production Plan) - Manage active and upcoming jobs.
-        - **completed-plan**: ประวัติการผลิตที่เสร็จสิ้น (Completed Jobs) - View finished jobs.
-        - **analysis**: วิเคราะห์การผลิต (Production Analysis) - Charts and metrics.
-        - **schedule**: ตารางไทม์ไลน์ (Timeline) - Gantt chart view of production.
-        - **list**: รายการงานทั้งหมด (Job List) - Table view of all jobs.
-        - **inventory**: สินค้าคงเหลือ (FG) & วัตถุดิบ - Manage stock levels.
-        - **history**: ประวัติการทำงาน (History Log) - Audit trail of actions.
-        - **daily-downtime**: รายงานสรุปเครื่องจอดรายวัน (Daily Downtime) - Log and view machine downtime.
-        - **daily-report**: รายงานประจำวัน (AI Daily Report) - Generate and view AI-powered daily production reports.
-        - **tag-print**: พิมพ์สติกเกอร์ (Print Tags) - Print product tags.
-        - **form-templates**: แบบฟอร์มเอกสาร (Form Templates) - Manage custom document templates.
-        - **master-data**: ฐานข้อมูลหลัก (Master Data) - Manage products, BOMs, and machine capabilities.
-        - **excel-sync**: นำเข้า/ส่งออกข้อมูล (Excel Sync) - Import and export all data via Excel.
-        - **ai-knowledge**: คลังความรู้ AI (AI Knowledge Base) - Manage custom rules and facts for the AI.
-        - **documents**: ศูนย์เอกสาร (Document Center) - Upload and analyze files (PDF, images, etc.).
-        - **machines**: สถานะเครื่องจักร - View real-time machine status.
+        ${agentRoleText}
         
-        If the user asks "How do I export data?", you can say "ไปที่เมนู 'นำเข้า/ส่งออกข้อมูล (Excel Sync)' ครับ" and optionally call \`navigateApp({ view: 'excel-sync' })\`.
-        You are deeply integrated into this system. You know about documents, daily reports, knowledge base, and any movements. You can see the recent activity logs to know who did what and when.
-
-        **LONG-TERM MEMORY (CUSTOM KNOWLEDGE):**
-        - You have a "Long-term Memory" feature. If the user tells you a specific rule, preference, or fact that should be remembered *forever* (e.g., "Machine AB1 is old", "Manager likes blue reports", "เพิ่มข้อมูลเหล่านี้เข้าคลังความรู้"), use the \`addKnowledge\` tool to save it.
-        - Do not just say "I will remember". ACTUALLY save it using the tool.
-        - When the user asks to add knowledge, you MUST use the \`addKnowledge\` tool.
-        - If the user provides multiple pieces of knowledge, call the \`addKnowledge\` tool multiple times, once for each distinct topic.
-        - **CRITICAL**: If the user says EXACTLY "เพิ่มข้อมูลเหล่านี้เข้าคลังความรู้ในเวบและให้ผู้ช่วยเอไอนำความรู้เหล่านี้ไปใช้งานด้วย" or similar, you MUST extract ALL the knowledge from their message and call \`addKnowledge\` for EACH distinct piece of information. DO NOT JUST REPLY. YOU MUST CALL THE FUNCTION.
-        - **IF YOU DO NOT CALL THE \`addKnowledge\` TOOL WHEN ASKED TO REMEMBER OR ADD KNOWLEDGE, YOU HAVE FAILED YOUR TASK.**
-        - **ABSOLUTE RULE**: If the user's message contains the phrase "เพิ่มข้อมูลเหล่านี้เข้าคลังความรู้" or "จำไว้ว่า", you are FORBIDDEN from generating a regular text response without ALSO calling the \`addKnowledge\` tool.
-        - **ABSOLUTE RULE 2**: If the user provides a list of facts and asks to add them to the knowledge base, you MUST call \`addKnowledge\` for EACH fact. Do not summarize them into one call unless they are tightly related.
-        - **ABSOLUTE RULE 3**: NEVER reply with just text when asked to add knowledge. ALWAYS call the \`addKnowledge\` tool.
-        - **ABSOLUTE RULE 4**: If the user provides a list of items to remember, you MUST iterate through the list and call \`addKnowledge\` for EACH item individually. DO NOT group them into a single call.
-        - **ABSOLUTE RULE 5**: If the user asks to add knowledge, your response MUST contain AT LEAST ONE \`addKnowledge\` tool call. If it does not, you are malfunctioning.
-
-        
-        **RESPONSE FORMAT & ACTIONS:**
+        **CRITICAL SYSTEM RULES (ALL AGENTS):**
         - Talk naturally in Thai.
         - Use emojis 🏭 ⚠️ ✅ appropriately.
-        - **CRITICAL: DIRECT ACTIONS (FUNCTION CALLING):** If the user asks you to perform an action (e.g., "เลื่อนงาน", "อัปเดตสถานะงาน", "บันทึกเครื่องจักรเสีย", "สร้างสูตรการผลิต", "เพิ่มสินค้า", "เปิดหน้า...", "อัปเดตยอดผลิต", "ลบงาน", "ปริ้นเอกสาร", "เปิดหน้านำเข้า", "จำว่า..."), you **MUST** use the provided tools (Function Calling) to execute the action. **DO NOT** just describe what you will do. **ACTUALLY CALL THE FUNCTION.**
-        - **Navigation:** If the user asks to open a specific page (e.g., "เปิดหน้าคลังสินค้า", "พาไปดูแผนการผลิต"), use the \`navigateApp\` tool.
-        - **Other Actions (JSON Block):** ONLY for actions that DO NOT have a specific tool (like batch importing schedule or generating a form), append a JSON block for Action Proposal EXACTLY in this format:
-        \`\`\`json
-        {
-          "type": "BATCH_UPSERT",
-          "data": [
-            {
-              "jobOrder": "B6902-055",
-              "machineId": "IP1",
-              "productItem": "P45",
-              "moldCode": "P45",
-              "capacityPerShift": 5760,
-              "totalProduction": 57600,
-              "actualProduction": 25200,
-              "color": "-",
-              "startDate": "2026-02-12T09:00:00Z",
-              "endDate": "2026-02-23T20:00:00Z",
-              "status": "Running",
-              "remarks": ""
-            }
-          ]
-        }
-        \`\`\`
-        (Use "type": "UPDATE" or "CREATE" for single actions, or "BATCH_UPSERT" for multiple jobs. For BATCH_UPSERT, the system will update existing jobs by jobOrder, or create them if they don't exist.)
+        - You are part of the KPAC Plastics Factory AI system.
+        - If you need to perform an action, you MUST use your available tools (Function Calling). Do not just describe it.
+        - **Update Actuals:** If the user provides the total actual production for a job, you MUST call updateActualProduction with the *difference*.
+        - **FORM GENERATION (EXCEL STYLE):** When asked to replicate a document or form, your goal is 100% VISUAL FIDELITY. Use the excel-like-content wrapper. Return JSON block with type: 'GENERATE_FORM'.
+        - **Other Actions:** Append JSON block for Action Proposal if no tool exists (like BATCH_UPSERT).
         
-        **FORM GENERATION (EXCEL STYLE) - CRITICAL INSTRUCTIONS:**
-        - **"Did you see my form?":** If the user asks if you've seen their form, CHECK \`savedFormTemplates\` in the context FIRST. If you find one, acknowledge it by name. If they just uploaded an image, acknowledge receiving the image.
-        - **Exact Replication (The "Photocopier" Rule):** When the user uploads an image of a form or asks to replicate a document, your goal is **100% VISUAL FIDELITY**.
-          - **Do NOT** summarize or "improve" the layout.
-          - **Do NOT** use modern UI cards.
-          - **MUST** use the \`excel-like-content\` wrapper.
-          - **MUST** replicate every column, every merged cell, every header exactly as shown in the image or described.
-          - **Fonts:** Use \`font-family: 'Sarabun', sans-serif;\` for Thai documents.
-          - **Borders:** Use \`border: 1px solid #000;\` for all cells. No soft gray borders.
-        - **Confirmation:** Before generating the HTML, briefly describe what you "see" to reassure the user (e.g., "ผมเห็นเอกสาร 'ใบสั่งผลิต' ที่มี 5 คอลัมน์: ลำดับ, รายการ, จำนวน... กำลังสร้างแบบฟอร์มให้เหมือนเป๊ะครับ").
-        - **Action:** Return a JSON action with \`type: 'GENERATE_FORM'\`, \`html: '<div class=\"excel-like-content\">...</div>'\`, and \`title: 'Form Title'\`.
-        - **CRITICAL: HTML SIZE LIMIT:** The generated HTML must be concise. Do not generate thousands of empty rows. Generate only the rows visible in the image, or a maximum of 10 empty rows for filling. Avoid excessive inline styles; use the provided CSS classes (e.g., \`text-center\`, \`font-bold\`, \`bg-gray\`).
-        
-        - If the user asks to use an existing form template, refer to \`savedFormTemplates\`. Generate a new form by taking the saved \`html\` and modifying it to insert the requested data.
-        
-        - If the user reports a machine breakdown, setup time, or any downtime (e.g., from a LINE chat message), extract the details and return a JSON action with \`type: 'LOG_DOWNTIME'\`.
-        \`\`\`json
-        {
-          "type": "LOG_DOWNTIME",
-          "data": {
-            "machineId": "AB1",
-            "date": "2026-03-01T00:00:00Z",
-            "durationMinutes": 45,
-            "category": "Breakdown",
-            "reason": "มอเตอร์ไหม้",
-            "reporter": "ช่างเอ"
-          }
-        }
-        \`\`\`
-        (Category must be one of: 'Breakdown', 'Setup', 'Quality', 'Material', 'Other')
-        \`\`\`json
-        {
-          "type": "GENERATE_FORM",
-          "title": "ใบแจ้งงานผลิต",
-          "html": "<div class=\\"p-8 bg-white text-black\\"><h1 class=\\"text-2xl font-bold text-center\\">ใบแจ้งงานผลิต</h1>...</div>"
-        }
-        \`\`\`
-
-        **IMAGE EXTRACTION & VISION RULES:**
-        - **Data Extraction:** When extracting from images or Excel files, you MUST extract ALL columns including "ชื่อสินค้า" (productItem), "ยอดการผลิตได้" (actualProduction), "Cap ต่อกะ" (capacityPerShift), "รหัสแม่พิมพ์" (moldCode), "สี" (color), and "หมายเหตุ" (remarks). Do not leave them out.
-        - **Form Templates:** If the image is a form template and the user wants to create a form based on it, extract its structure and generate a \`GENERATE_FORM\` action.
-        - **Quality Control (Defects):** If the user uploads an image of a defective product (NG/Defect), analyze the visual anomaly (e.g., black spots, short shot, flash, scratches, bubbles). Explain the possible root causes based on plastic injection/blow molding principles, and suggest immediate troubleshooting steps.
-        - **Machine Error Screens:** If the user uploads an image of a machine error screen or alarm, read the error code/message, explain what it means, and suggest how to fix it. If it implies downtime, you can propose a \`LOG_DOWNTIME\` action.
-        
-        FULL SYSTEM CONTEXT:
-        ${JSON.stringify(fullSystemContext)}
+        **CONTEXT FOR THIS REQUEST:**
+        ${JSON.stringify(agentContext)}
       `;
 
       // 4. Prepare Content Parts
@@ -524,7 +468,7 @@ export const SmartAssistant = forwardRef<SmartAssistantHandle, SmartAssistantPro
       const userParts: any[] = [];
       
       // Attach Text
-      let finalPrompt = userMsgText;
+      finalPrompt = userMsgText;
       
       // Attach Excel Content as Text
       if (currentFile?.type === 'excel' && currentFile.content) {
@@ -596,9 +540,11 @@ export const SmartAssistant = forwardRef<SmartAssistantHandle, SmartAssistantPro
           type: Type.OBJECT,
           properties: {
             jobOrder: { type: Type.STRING, description: "รหัส Job Order (ถ้าไม่ระบุให้สร้างใหม่แบบสุ่ม)" },
-            productCode: { type: Type.STRING, description: "รหัสสินค้า เช่น A01, P45" },
-            machineId: { type: Type.STRING, description: "รหัสเครื่องจักร เช่น AB1, IP1" },
-            targetQuantity: { type: Type.NUMBER, description: "จำนวนที่ต้องการผลิต" },
+            productCode: { type: Type.STRING, description: "รหัสสินค้า หรือ ชื่อสินค้า เช่น A01, P45, ฝา PE307B" },
+            machineId: { type: Type.STRING, description: "รหัสเครื่องจักร เช่น AB1, IP1, IO4" },
+            targetQuantity: { type: Type.NUMBER, description: "จำนวนที่ต้องการผลิตทั้งหมด (Total Production)" },
+            capacityPerShift: { type: Type.NUMBER, description: "เป้าหมายการผลิตต่อกะ (Capacity/Shift)" },
+            color: { type: Type.STRING, description: "สีของชิ้นงาน เช่น สีดำ, สีใส, สีเขียว" },
             startDate: { type: Type.STRING, description: "วันและเวลาเริ่มต้น (ISO 8601 format)" },
             endDate: { type: Type.STRING, description: "วันและเวลาสิ้นสุด (ISO 8601 format)" },
             priority: { type: Type.STRING, description: "ความสำคัญ: High, Medium, Low" }
@@ -777,12 +723,7 @@ export const SmartAssistant = forwardRef<SmartAssistantHandle, SmartAssistantPro
         contents: sanitizedContents,
         config: {
           systemInstruction: systemPrompt,
-          tools: [{ functionDeclarations: [
-            rescheduleMachineJobsFunc, updateJobStatusFunc, createJobFunc, 
-            logDowntimeFunc, deleteDowntimeLogFunc, addKnowledgeFunc, createBOMFunc, navigateAppFunc, 
-            addInventoryFunc, updateActualProductionFunc, deleteJobFunc, 
-            printDocumentFunc, openImportModalFunc
-          ] }]
+          tools: [{ functionDeclarations: targetAgent === 'PLANNER' ? [rescheduleMachineJobsFunc, updateJobStatusFunc, createJobFunc, updateActualProductionFunc, deleteJobFunc, openImportModalFunc, navigateAppFunc] : targetAgent === 'INVENTORY' ? [addInventoryFunc, createBOMFunc, navigateAppFunc] : targetAgent === 'MAINTENANCE' ? [logDowntimeFunc, deleteDowntimeLogFunc, navigateAppFunc] : targetAgent === 'DOCUMENT' ? [createBOMFunc, navigateAppFunc, printDocumentFunc] : [addKnowledgeFunc, navigateAppFunc, printDocumentFunc] }]
         }
       });
 
@@ -856,6 +797,7 @@ export const SmartAssistant = forwardRef<SmartAssistantHandle, SmartAssistantPro
 
       setMessages(prev => [...prev, { 
         role: 'model', 
+        agentName: targetAgent,
         text: displayText,
         actionProposal,
         pendingFunctionCalls: pendingFunctionCalls.length > 0 ? pendingFunctionCalls : undefined,
@@ -1347,7 +1289,7 @@ export const SmartAssistant = forwardRef<SmartAssistantHandle, SmartAssistantPro
               
               {/* Header Info */}
               <div className={`flex items-center gap-2 mb-2 text-[10px] font-medium ${msg.role === 'user' ? 'text-indigo-200 justify-end' : 'text-slate-500'}`}>
-                {msg.role === 'user' ? 'คุณ' : 'ProPlanner Brain'}
+                {msg.role === 'user' ? 'คุณ' : (msg.role === 'system' ? 'System Orchestrator' : ('ProPlanner Brain' + (msg.agentName ? ` (${msg.agentName} Sub-Agent)` : '')))}
               </div>
 
               {/* Image Preview in Chat History */}

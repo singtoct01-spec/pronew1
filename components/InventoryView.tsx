@@ -4,6 +4,7 @@ import { Search, Package, AlertTriangle, Layers, Filter, Upload, FileDown, Plus,
 import * as XLSX from 'xlsx';
 import { InventoryItemModal } from './InventoryItemModal';
 import { BomModal } from './BomModal';
+import { InventoryImportModal } from './InventoryImportModal';
 
 interface InventoryViewProps {
   inventory: InventoryItem[];
@@ -33,7 +34,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'inventory' | 'bom'>('inventory');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Import Modal State
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   // BOM Search
   const [bomSearchTerm, setBomSearchTerm] = useState('');
@@ -104,7 +107,63 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     }
   };
 
-  const handleDeleteItemClick = (id: string) => {
+  
+  const handleBulkDelete = async () => {
+    if (selectedItems.length === 0) return;
+    if (window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบรายการสินค้าที่เลือกทั้งหมด ${selectedItems.length} รายการ?\nการกระทำนี้ไม่สามารถเรียกคืนได้`)) {
+      setIsBulkUpdating(true);
+      try {
+        for (const id of selectedItems) {
+          if (onDeleteInventory) {
+            onDeleteInventory(id); // Fire and forget (it is async inside App.tsx)
+          }
+        }
+        setSelectedItems([]);
+      } catch (error) {
+        console.error("Error bulk deleting:", error);
+        alert("เกิดข้อผิดพลาดในการลบข้อมูล");
+      } finally {
+        setIsBulkUpdating(false);
+      }
+    }
+  };
+
+  const handleExportSelected = () => {
+    if (selectedItems.length === 0) return;
+    
+    const itemsToExport = inventory.filter(i => selectedItems.includes(i.id));
+    
+    // CSV Header (with BOM for Excel Thai support)
+    const headers = ['ลำดับ', 'รหัสสินค้า', 'ชื่อสินค้า', 'หมวดหมู่', 'ยอดคงเหลือ', 'Min Stock', 'Max Stock', 'หน่วย', 'สถานที่เก็บ', 'กลุ่ม', 'หมายเหตุ'].join(',');
+    
+    const rows = itemsToExport.map((item, index) => {
+      const escapeStr = (str) => `"${(str || '').toString().replace(/"/g, '""')}"`;
+      return [
+        index + 1,
+        escapeStr(item.code),
+        escapeStr(item.name),
+        escapeStr(item.category),
+        item.currentStock,
+        item.minStock,
+        item.maxStock,
+        escapeStr(item.unit),
+        escapeStr(item.location),
+        escapeStr(item.group),
+        escapeStr(item.remarks)
+      ].join(',');
+    });
+    
+    const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + headers + "\n" + rows.join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `KPAC_Selected_Inventory_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+const handleDeleteItemClick = (id: string) => {
     if (window.confirm('คุณแน่ใจหรือไม่ว่าต้องการลบรายการสินค้านี้?')) {
       onDeleteInventory?.(id);
     }
@@ -241,135 +300,6 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [isImporting, setIsImporting] = useState(false);
   const [pendingImportItems, setPendingImportItems] = useState<any[] | null>(null);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        setIsImporting(true);
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
-        // Read as array of arrays to detect format
-        const rawData = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
-        
-        let isFGReport = false;
-        // Scan first 10 rows for the FG report signature
-        for (let i = 0; i < Math.min(10, rawData.length); i++) {
-          const rowStr = (rawData[i] || []).join(' ');
-          if (rowStr.includes('รายงานยอดสินค้า (รวมทุกยอด)') || rowStr.includes('บริษัท เคแพค')) {
-             isFGReport = true;
-             break;
-          }
-        }
-
-        const importedItems: any[] = [];
-
-        if (isFGReport) {
-          // --- FG REPORT PARSING LOGIC ---
-          let isDataRow = false;
-          for (let i = 0; i < rawData.length; i++) {
-            const row: any = rawData[i];
-            
-            // Detect header row to start reading data
-            if (row[0] === 'รหัสสินค้า' && row[1] === 'ชื่อสินค้า') {
-              isDataRow = true;
-              continue;
-            }
-
-            if (isDataRow) {
-              // Stop reading if we hit an empty row or a row that doesn't look like data
-              if (!row[0] && !row[1]) continue;
-
-              // Extract data based on the provided format
-              const code = String(row[0] || '').trim();
-              const name = String(row[1] || '').trim();
-              
-              let currentStockStr = String(row[2] || '').trim();
-              if (!currentStockStr && row[3]) {
-                currentStockStr = String(row[3]).trim();
-              }
-              
-              let remarks = '';
-              if (row[3] && String(row[3]).trim() !== currentStockStr) {
-                 remarks = String(row[3]).trim();
-              } else if (row[4]) {
-                 remarks = String(row[4]).trim();
-              }
-
-              const currentStock = Number(currentStockStr.replace(/,/g, ''));
-
-              if (code && name) {
-                let category = 'FG'; 
-                if (name.includes('Preform') || name.includes('พรีฟอร์ม')) category = 'Preform';
-                if (name.includes('ฝา')) category = 'Other'; 
-                
-                importedItems.push({
-                  id: code, 
-                  code: code,
-                  name: name,
-                  category: category as any,
-                  unit: name.includes('กล่อง') ? 'box' : (name.includes('แพ็ค') ? 'pack' : 'pcs'), 
-                  currentStock: isNaN(currentStock) ? 0 : currentStock,
-                  minStock: 0, 
-                  maxStock: 0, 
-                  location: 'รง.ใหม่', 
-                  lastUpdated: new Date().toISOString(),
-                  group: '',
-                  remarks: remarks,
-                  usage: ''
-                });
-              }
-            }
-          }
-        } else {
-          // --- STANDARD TEMPLATE PARSING LOGIC ---
-          const objectData = XLSX.utils.sheet_to_json(ws);
-          objectData.forEach((row: any) => {
-            const code = row['รหัสสินค้า'] || row['code'] || '';
-            const name = row['ชื่อสินค้า'] || row['name'] || '';
-            
-            if (!code && !name) return; // Skip empty rows
-
-            importedItems.push({
-              id: code || `ITEM-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-              code: code,
-              name: name,
-              category: (row['หมวดหมู่'] || row['category'] || 'Other') as any,
-              unit: row['หน่วย'] || row['unit'] || 'pcs',
-              currentStock: Number(String(row['ยอดคงเหลือ'] || row['currentStock'] || 0).replace(/,/g, '')),
-              minStock: Number(String(row['Min Stock'] || row['minStock'] || 0).replace(/,/g, '')),
-              maxStock: Number(String(row['Max Stock'] || row['maxStock'] || 0).replace(/,/g, '')),
-              location: row['สถานที่เก็บ'] || row['location'] || '',
-              lastUpdated: new Date().toISOString(),
-              group: row['กลุ่ม'] || row['group'] || '',
-              remarks: row['หมายเหตุ'] || row['remarks'] || '',
-              usage: row['การใช้งาน'] || row['usage'] || ''
-            });
-          });
-        }
-
-        if (importedItems.length > 0) {
-          setPendingImportItems(importedItems);
-        } else {
-           alert("ไม่พบข้อมูลที่สามารถนำเข้าได้ กรุณาตรวจสอบรูปแบบไฟล์");
-        }
-      } catch (error) {
-        console.error("Error parsing Excel file:", error);
-        alert("เกิดข้อผิดพลาดในการอ่านไฟล์ Excel กรุณาตรวจสอบรูปแบบไฟล์");
-      } finally {
-        setIsImporting(false);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = '';
-        }
-      }
-    };
-    reader.readAsBinaryString(file);
-  };
-
   const confirmImport = async () => {
     if (!pendingImportItems || !onImportInventory) return;
     
@@ -428,15 +358,6 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   return (
     <div className="space-y-6 font-kanit">
       
-      {/* Hidden File Input */}
-      <input 
-        type="file" 
-        ref={fileInputRef} 
-        onChange={handleFileUpload} 
-        accept=".xlsx, .xls" 
-        className="hidden" 
-      />
-
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
@@ -533,10 +454,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   <span className="hidden sm:inline">โหลดเทมเพลต</span>
                 </button>
                 <button 
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() => setIsImportModalOpen(true)}
                   disabled={isImporting}
                   className="flex items-center gap-2 px-3 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium shadow-sm transition-colors disabled:opacity-50"
-                  title="นำเข้าข้อมูลสินค้าสำเร็จรูป (FG) และวัตถุดิบผ่านไฟล์ Excel"
+                  title="นำเข้าข้อมูลสินค้าสำเร็จรูป (FG) และวัตถุดิบ"
                 >
                   {isImporting ? (
                     <>
@@ -546,18 +467,39 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                   ) : (
                     <>
                       <Upload size={16} />
-                      <span className="hidden sm:inline">นำเข้า Excel</span>
+                      <span className="hidden sm:inline">นำเข้าข้อมูล</span>
                     </>
                   )}
                 </button>
                 {selectedItems.length > 0 && (
-                  <button 
-                    className="flex items-center gap-2 px-3 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 text-sm font-medium shadow-sm transition-colors"
-                    onClick={() => setIsBulkEditModalOpen(true)}
-                  >
-                    <CheckSquare size={16} />
-                    <span className="hidden sm:inline">แก้ไขหมวดหมู่ ({selectedItems.length})</span>
-                  </button>
+                  <div className="flex items-center gap-2 border-l border-slate-300 pl-2 ml-2">
+                    <button 
+                      className="flex items-center gap-2 px-3 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 text-sm font-medium shadow-sm transition-colors"
+                      onClick={() => setIsBulkEditModalOpen(true)}
+                      title="แก้ไขหมวดหมู่"
+                    >
+                      <CheckSquare size={16} />
+                      <span className="hidden lg:inline">หมวดหมู่</span>
+                    </button>
+                    <button 
+                      className="flex items-center gap-2 px-3 py-2 bg-slate-600 text-white rounded-lg hover:bg-slate-700 text-sm font-medium shadow-sm transition-colors"
+                      onClick={handleExportSelected}
+                      title="ส่งออกที่เลือกเป็น CSV"
+                    >
+                      <FileDown size={16} />
+                      <span className="hidden lg:inline">ส่งออก</span>
+                    </button>
+                    <button 
+                      className="flex items-center gap-2 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium shadow-sm transition-colors disabled:opacity-50"
+                      onClick={handleBulkDelete}
+                      disabled={isBulkUpdating}
+                      title="ลบที่เลือก"
+                    >
+                      {isBulkUpdating ? <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div> : <Trash2 size={16} />}
+                      <span className="hidden lg:inline">ลบ ({selectedItems.length})</span>
+                      <span className="lg:hidden">{selectedItems.length}</span>
+                    </button>
+                  </div>
                 )}
                 <button 
                   className="flex items-center gap-2 px-3 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium shadow-sm transition-colors"
@@ -956,6 +898,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         </div>
       )}
 
+      <InventoryImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onImport={(items) => {
+          setPendingImportItems(items);
+        }}
+      />
     </div>
   );
 };

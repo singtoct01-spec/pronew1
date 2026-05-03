@@ -946,18 +946,19 @@ const App: React.FC = () => {
     }
   };
 
-  const handleSaveFormTemplate = async (html: string, title: string) => {
+  const handleSaveFormTemplate = async (html: string, title: string, id?: string) => {
     try {
+      const existing = id ? formTemplates.find(f => f.id === id) : null;
       const newForm: FormTemplate = {
-        id: `form-${Date.now()}`,
+        id: id || `form-${Date.now()}`,
         title,
         html,
-        createdAt: new Date().toISOString(),
+        createdAt: existing ? existing.createdAt : new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
       const sanitizedForm = JSON.parse(JSON.stringify(newForm));
       await setDoc(doc(db, 'forms', sanitizedForm.id), sanitizedForm);
-      setCustomForm(prev => prev ? { ...prev, id: sanitizedForm.id } : null);
+      setCustomForm(prev => prev ? { ...prev, html, title, id: sanitizedForm.id } : null);
       alert('บันทึกแบบฟอร์มสำเร็จ');
     } catch (error) {
       console.error("Error saving form template:", error);
@@ -968,8 +969,10 @@ const App: React.FC = () => {
   const handleDeleteFormTemplate = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'forms', id));
+      alert('ลบแบบฟอร์มสำเร็จ');
     } catch (error) {
       console.error("Error deleting form template:", error);
+      alert('เกิดข้อผิดพลาดในการลบแบบฟอร์ม: ' + (error as Error).message);
     }
   };
 
@@ -1180,39 +1183,94 @@ const App: React.FC = () => {
 
   const handleImportInventory = async (importedItems: any[]) => {
     try {
-      // Create a batch to write all imported items to Firebase
-      // Firestore batch limit is 500. We chunk by 400 to be safe.
-      const chunkSize = 400;
-      for (let i = 0; i < importedItems.length; i += chunkSize) {
-        const chunk = importedItems.slice(i, i + chunkSize);
+      const logsToCreate: any[] = [];
+      let itemsToUpdate = importedItems.map(item => {
+        let finalItem = { ...item };
+        const existing = inventory.find(ex => ex.code === item.code || ex.name === item.name);
+        
+        if (existing) {
+            // Merge existing data if some fields are missing from import
+            finalItem.id = existing.id; // Preserve original ID so we overwrite correctly
+            if (!finalItem.group && existing.group) finalItem.group = existing.group;
+            if (!finalItem.usage && existing.usage) finalItem.usage = existing.usage;
+            if (!finalItem.minStock && existing.minStock) finalItem.minStock = existing.minStock;
+            if (!finalItem.maxStock && existing.maxStock) finalItem.maxStock = existing.maxStock;
+
+            let prevStock = existing.currentStock || 0;
+            let newStock = finalItem.currentStock || 0;
+            let diff = newStock - prevStock;
+
+            if (diff !== 0) {
+               logsToCreate.push({
+                  id: `LOG-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                  timestamp: new Date().toISOString(),
+                  action: diff > 0 ? 'รับเข้าสินค้าสำเร็จรูป' : 'เบิกออกสินค้าสำเร็จรูป',
+                  details: `${finalItem.name} (${finalItem.code})
+ยอดเดิม: ${prevStock.toLocaleString()}
+ยอดใหม่: ${newStock.toLocaleString()}
+ส่วนต่าง: ${diff > 0 ? '+' + diff.toLocaleString() : diff.toLocaleString()}
+นำเข้าผ่าน Excel (อัปเดตล่าสุด)`,
+                  user: currentUser ? currentUser.name : 'System Admin'
+               });
+            }
+        } else {
+           // New item, check if stock > 0
+           if (finalItem.currentStock > 0) {
+              logsToCreate.push({
+                  id: `LOG-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                  timestamp: new Date().toISOString(),
+                  action: 'สร้างสินค้าและรับเข้า',
+                  details: `เพิ่มข้อมูลใหม่ ${finalItem.name} (${finalItem.code}) จำนวน ${finalItem.currentStock.toLocaleString()} ${finalItem.unit}
+ผ่านการนำเข้า Excel`,
+                  user: currentUser ? currentUser.name : 'System Admin'
+               });
+           }
+        }
+        return finalItem;
+      });
+
+      // We need to batch write both itemsToUpdate and logsToCreate
+      const allOperations = [
+          ...itemsToUpdate.map(item => ({ type: 'item', data: item })),
+          ...logsToCreate.map(log => ({ type: 'log', data: log }))
+      ];
+
+      allOperations.push({
+          type: 'log',
+          data: {
+             id: `LOG-${Date.now()}-SUMMARY`,
+             timestamp: new Date().toISOString(),
+             action: 'นำเข้าข้อมูลสินค้าคงคลัง (SUMMARY)',
+             details: `นำเข้าและอัปเดตข้อมูลจำนวน ${importedItems.length} รายการผ่าน Excel`,
+             user: currentUser ? currentUser.name : 'System Admin'
+          }
+      });
+
+      const chunkSize = 400; // Keep space for batch
+      for (let i = 0; i < allOperations.length; i += chunkSize) {
+        const chunk = allOperations.slice(i, i + chunkSize);
         const batch = writeBatch(db);
         
-        for (const item of chunk) {
-          const itemRef = doc(db, 'inventory', item.id);
-          const sanitizedItem = JSON.parse(JSON.stringify(item));
-          batch.set(itemRef, sanitizedItem);
-        }
-        
-        // Add log in the last chunk
-        if (i + chunkSize >= importedItems.length) {
-          const logRef = collection(db, 'logs');
-          batch.set(doc(logRef, `LOG-${Date.now()}`), {
-            id: `LOG-${Date.now()}`,
-            timestamp: new Date().toISOString(),
-            action: 'นำเข้าข้อมูลสินค้าคงคลัง',
-            details: `นำเข้าข้อมูลจำนวน ${importedItems.length} รายการผ่าน Excel`,
-            user: 'System Admin'
-          });
+        for (const op of chunk) {
+          if (op.type === 'item') {
+            const itemRef = doc(db, 'inventory', op.data.id);
+            const sanitizedItem = JSON.parse(JSON.stringify(op.data));
+            batch.set(itemRef, sanitizedItem, { merge: true }); // Merge true to not overwrite unmentioned fields completely
+          } else {
+            const logRef = doc(collection(db, 'logs'), op.data.id);
+            const sanitizedLog = JSON.parse(JSON.stringify(op.data));
+            batch.set(logRef, sanitizedLog);
+          }
         }
         
         await batch.commit();
       }
       
-      alert(`นำเข้าข้อมูลสำเร็จ ${importedItems.length} รายการ`);
-      
       // Notify assistant
       if (assistantRef.current) {
-        assistantRef.current.notifyEvent(`ผู้ใช้งานได้นำเข้าข้อมูลสินค้าคงคลังจำนวน ${importedItems.length} รายการ`);
+        const diffInfos = logsToCreate.map(l => l.details.split('\n')[0] + ' ' + l.details.split('\n')[3]).join(', ');
+        assistantRef.current.notifyEvent(`ผู้ใช้งานนำเข้า/อัปเดตสินค้าคงคลัง ${importedItems.length} รายการ มีรายการที่เปลี่ยนยอดจำนวน ${logsToCreate.length} สินค้า
+รายละเอียดคร่าวๆ: ${diffInfos ? diffInfos.substring(0, 300) + '...' : '-'}`);
       }
     } catch (error) {
       console.error("Error importing inventory:", error);
@@ -1651,17 +1709,19 @@ const App: React.FC = () => {
               }}
               onDeleteForm={handleDeleteFormTemplate}
               onSaveForm={handleSaveFormTemplate}
+              onOpenAssistant={() => setIsAssistantOpen(true)}
             />
           } />
-          <Route path="/order-detail" element={viewingOrderJob ? <ProductionOrderPrint job={viewingOrderJob} onBack={() => navigate('/plan')} /> : <Navigate to="/plan" />} />
+          <Route path="/order-detail" element={viewingOrderJob ? <ProductionOrderPrint job={viewingOrderJob} boms={boms} inventory={inventory} onBack={() => navigate('/plan')} /> : <Navigate to="/plan" />} />
           <Route path="/plan-print" element={<ProductionPlanPrint jobs={jobs} onBack={() => navigate('/plan')} />} />
           <Route path="/handover" element={handoverJobs.length > 0 ? <DocumentHandoverView jobs={handoverJobs} onBack={() => navigate('/list')} /> : <Navigate to="/list" />} />
           <Route path="/tag-print" element={tagJob ? <ProductTagView job={tagJob} productSpecs={productSpecs} onBack={() => navigate('/list')} /> : <Navigate to="/list" />} />
           <Route path="/custom-form" element={customForm ? <CustomFormView 
               html={customForm.html} 
               title={customForm.title} 
+              id={customForm.id}
               onBack={() => navigate('/form-templates')} 
-              onSave={!customForm.id ? () => handleSaveFormTemplate(customForm.html, customForm.title) : undefined}
+              onSave={(html, title) => handleSaveFormTemplate(html, title, customForm.id)}
             /> : <Navigate to="/form-templates" />} />
           <Route path="/users" element={<UserManagement />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

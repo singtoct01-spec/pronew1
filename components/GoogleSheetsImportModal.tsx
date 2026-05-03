@@ -16,6 +16,9 @@ export const GoogleSheetsImportModal: React.FC<ImportModalProps> = ({ isOpen, on
   const [error, setError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
 
+  const [publishedUrl, setPublishedUrl] = useState('');
+  const [isFetchingUrl, setIsFetchingUrl] = useState(false);
+
   if (!isOpen) return null;
 
   const handleJobChange = (index: number, field: keyof Partial<ProductionJob>, value: any) => {
@@ -86,10 +89,12 @@ export const GoogleSheetsImportModal: React.FC<ImportModalProps> = ({ isOpen, on
       let machineIdx = mergedHeaders.findIndex(h => h.includes('machine') || h.includes('เครื่อง'));
       let productIdx = mergedHeaders.findIndex(h => h.includes('product') || h.includes('สินค้า') || h.includes('รายการ'));
       let moldIdx = mergedHeaders.findIndex(h => h.includes('mold') || h.includes('แม่พิมพ์'));
-      let targetIdx = mergedHeaders.findIndex(h => h.includes('target') || h.includes('ยอดผลิต') || h.includes('เป้าหมาย'));
+      let targetIdx = mergedHeaders.findIndex(h => h.includes('target') || h.includes('ยอดผลิต') || h.includes('เป้าหมาย') || (h.includes('production') && h.includes('แผน')));
       let jobOrderIdx = mergedHeaders.findIndex(h => h.includes('job') || h.includes('เลขที่'));
       let noteIdx = mergedHeaders.findIndex(h => h.includes('note') || h.includes('หมายเหตุ'));
       let actualIdx = mergedHeaders.findIndex(h => h.includes('actual') || h.includes('ยอดการผลิตได้') || h.includes('ยอดการผลิดได้') || h.includes('ยอดที่ได้') || h.includes('ผลิตได้'));
+      let colorIdx = mergedHeaders.findIndex(h => h.includes('color') || h.includes('สี') && !h.includes('สินค้า'));
+      let capacityIdx = mergedHeaders.findIndex(h => h.includes('capacity') || h.includes('cap') || h.includes('แคป') || h.includes('ชม'));
       
       let startDateIdx = mergedHeaders.findIndex(h => (h.includes('เริ่มผลิต') || h.includes('start')) && (h.includes('วันที่') || h.includes('date')));
       let startTimeIdx = mergedHeaders.findIndex(h => (h.includes('เริ่มผลิต') || h.includes('start')) && (h.includes('เวลา') || h.includes('time')));
@@ -111,7 +116,9 @@ export const GoogleSheetsImportModal: React.FC<ImportModalProps> = ({ isOpen, on
           machineIdx = 0;
           productIdx = 1;
           moldIdx = 2;
+          capacityIdx = 3;
           targetIdx = 4;
+          colorIdx = 5;
           startDateIdx = 6;
           startTimeIdx = 7;
           endDateIdx = 9;
@@ -165,6 +172,8 @@ export const GoogleSheetsImportModal: React.FC<ImportModalProps> = ({ isOpen, on
         let moldCode = moldIdx !== -1 ? cols[moldIdx]?.trim() : 'Standard';
         let totalProduction = targetIdx !== -1 ? parseInt(cols[targetIdx]?.replace(/,/g, '')) || 0 : 0;
         let actualProduction = actualIdx !== -1 ? parseInt(cols[actualIdx]?.replace(/,/g, '')) || 0 : 0;
+        let capacityPerShift = capacityIdx !== -1 ? parseInt(cols[capacityIdx]?.replace(/,/g, '')) || 0 : 0;
+        let color = colorIdx !== -1 ? cols[colorIdx]?.trim() : '-';
         let note = noteIdx !== -1 ? cols[noteIdx]?.trim() : '';
         
         let startDate: string | undefined;
@@ -189,10 +198,10 @@ export const GoogleSheetsImportModal: React.FC<ImportModalProps> = ({ isOpen, on
           jobOrder,
           productItem,
           machineId,
-          capacityPerShift: 0,
+          capacityPerShift,
           totalProduction,
           actualProduction,
-          color: '',
+          color,
           startDate,
           endDate,
           status: actualProduction >= totalProduction && totalProduction > 0 ? 'Overproduced' : 'Planned',
@@ -204,6 +213,8 @@ export const GoogleSheetsImportModal: React.FC<ImportModalProps> = ({ isOpen, on
           const existingJob = jobMap.get(jobOrder)!;
           existingJob.totalProduction = Math.max(existingJob.totalProduction || 0, newJob.totalProduction || 0);
           existingJob.actualProduction = Math.max(existingJob.actualProduction || 0, newJob.actualProduction || 0);
+          if (newJob.capacityPerShift && !existingJob.capacityPerShift) existingJob.capacityPerShift = newJob.capacityPerShift;
+          if (newJob.color && newJob.color !== '-') existingJob.color = newJob.color;
           if (newJob.note) existingJob.note = newJob.note;
           if (newJob.startDate) existingJob.startDate = newJob.startDate;
           if (newJob.endDate) existingJob.endDate = newJob.endDate;
@@ -223,6 +234,96 @@ export const GoogleSheetsImportModal: React.FC<ImportModalProps> = ({ isOpen, on
     }
   };
 
+  const processExcelData = (data: any[]) => {
+    const jobMap = new Map<string, Partial<ProductionJob>>();
+
+    data.forEach((row, i) => {
+      const jobOrder = row['JobOrder'] || row['เลขที่ใบสั่งผลิต'] || row['เลขที่ใบสั่งผลิต '] || `JOB-EXC-${i}`;
+      
+      let startDate: string | undefined;
+      let endDate: string | undefined;
+      
+      // Try to parse dates if available
+      const startDateStr = row['StartDate'] || row['เริ่มผลิต วันที่'] || row['เริ่มผลิตวันที่'];
+      const startTimeStr = row['StartTime'] || row['เริ่มผลิต เวลา'] || row['เริ่มผลิตเวลา'];
+      const endDateStr = row['EndDate'] || row['กำหนดแล้วเสร็จ วันที่'] || row['กำหนดแล้วเสร็จวันที่'];
+      const endTimeStr = row['EndTime'] || row['กำหนดแล้วเสร็จ เวลา'] || row['กำหนดแล้วเสร็จเวลา'];
+
+      const parseThaiDate = (dateStr: any, timeStr: any) => {
+        if (!dateStr) return null;
+        const str = String(dateStr).trim();
+        const parts = str.split('/');
+        if (parts.length === 3) {
+          const day = parseInt(parts[0], 10);
+          const month = parseInt(parts[1], 10) - 1;
+          let year = parseInt(parts[2], 10);
+          if (year > 2500) year -= 543;
+          
+          let hours = 0;
+          let minutes = 0;
+          if (timeStr) {
+             const tStr = String(timeStr).trim();
+             const timeParts = tStr.includes(':') ? tStr.split(':') : tStr.split('.');
+             if (timeParts.length >= 2) {
+                hours = parseInt(timeParts[0], 10);
+                minutes = parseInt(timeParts[1], 10);
+             }
+          }
+          const date = new Date(year, month, day, hours, minutes);
+          if (!isNaN(date.getTime())) return date.toISOString();
+        } else if (typeof dateStr === 'number') {
+           // Excel serial date
+           const date = new Date(Math.round((dateStr - 25569) * 86400 * 1000));
+           if (!isNaN(date.getTime())) return date.toISOString();
+        }
+        return null;
+      };
+
+      startDate = parseThaiDate(startDateStr, startTimeStr) || undefined;
+      endDate = parseThaiDate(endDateStr, endTimeStr) || undefined;
+
+      const totalProduction = parseInt(String(row['Target'] || row['เป้าหมาย'] || row['ยอดผลิต'] || row['ยอดการผลิต(แผน)'] || 1000).replace(/,/g, '')) || 1000;
+      const actualProduction = parseInt(String(row['Actual'] || row['ยอดการผลิดได้'] || row['ยอดการผลิตได้'] || row['ยอดผลิตได้'] || 0).replace(/,/g, '')) || 0;
+      const capacityPerShift = parseInt(String(row['Capacity'] || row['Cap ต่อกะ'] || row['แคป/กะ'] || 0).replace(/,/g, '')) || 0;
+      const color = row['Color'] || row['สี'] || row['Color '] || '-';
+
+      const newJob: Partial<ProductionJob> = {
+        id: `EXC-${Date.now()}-${i}`,
+        jobOrder,
+        productItem: row['Product'] || row['สินค้า'] || row['รายการสินค้า'] || 'Unknown Product',
+        machineId: row['Machine'] || row['เครื่องจักร'] || row['เครื่อง'] || 'IP1',
+        capacityPerShift,
+        totalProduction,
+        actualProduction,
+        color,
+        startDate,
+        endDate,
+        status: actualProduction >= totalProduction && totalProduction > 0 ? 'Overproduced' : 'Planned',
+        moldCode: row['Mold'] || row['แม่พิมพ์'] || row['รหัสแม่พิมพ์'] || 'Standard',
+        note: row['Note'] || row['หมายเหตุ'] || ''
+      };
+
+      if (jobMap.has(jobOrder)) {
+        const existingJob = jobMap.get(jobOrder)!;
+        existingJob.totalProduction = Math.max(existingJob.totalProduction || 0, newJob.totalProduction || 0);
+        existingJob.actualProduction = Math.max(existingJob.actualProduction || 0, newJob.actualProduction || 0);
+        if (newJob.capacityPerShift && !existingJob.capacityPerShift) existingJob.capacityPerShift = newJob.capacityPerShift;
+        if (newJob.color && newJob.color !== '-') existingJob.color = newJob.color;
+        if (newJob.note) existingJob.note = newJob.note;
+        if (newJob.startDate) existingJob.startDate = newJob.startDate;
+        if (newJob.endDate) existingJob.endDate = newJob.endDate;
+        existingJob.status = (existingJob.actualProduction || 0) >= (existingJob.totalProduction || 0) ? 'Overproduced' : 'Planned';
+      } else {
+        jobMap.set(jobOrder, newJob);
+      }
+    });
+
+    const jobs = Array.from(jobMap.values());
+    if (jobs.length === 0) throw new Error('ไม่พบข้อมูล (ตรวจเช็คคอลัมน์ข้อมูล)');
+    setParsedJobs(jobs);
+    setError(null);
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -236,92 +337,48 @@ export const GoogleSheetsImportModal: React.FC<ImportModalProps> = ({ isOpen, on
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
 
-        const jobMap = new Map<string, Partial<ProductionJob>>();
-
-        data.forEach((row, i) => {
-          const jobOrder = row['JobOrder'] || row['เลขที่ใบสั่งผลิต'] || row['เลขที่ใบสั่งผลิต '] || `JOB-EXC-${i}`;
-          
-          let startDate: string | undefined;
-          let endDate: string | undefined;
-          
-          // Try to parse dates if available
-          const startDateStr = row['StartDate'] || row['เริ่มผลิต วันที่'] || row['เริ่มผลิตวันที่'];
-          const startTimeStr = row['StartTime'] || row['เริ่มผลิต เวลา'] || row['เริ่มผลิตเวลา'];
-          const endDateStr = row['EndDate'] || row['กำหนดแล้วเสร็จ วันที่'] || row['กำหนดแล้วเสร็จวันที่'];
-          const endTimeStr = row['EndTime'] || row['กำหนดแล้วเสร็จ เวลา'] || row['กำหนดแล้วเสร็จเวลา'];
-
-          const parseThaiDate = (dateStr: any, timeStr: any) => {
-            if (!dateStr) return null;
-            const str = String(dateStr).trim();
-            const parts = str.split('/');
-            if (parts.length === 3) {
-              const day = parseInt(parts[0], 10);
-              const month = parseInt(parts[1], 10) - 1;
-              let year = parseInt(parts[2], 10);
-              if (year > 2500) year -= 543;
-              
-              let hours = 0;
-              let minutes = 0;
-              if (timeStr) {
-                 const tStr = String(timeStr).trim();
-                 const timeParts = tStr.includes(':') ? tStr.split(':') : tStr.split('.');
-                 if (timeParts.length >= 2) {
-                    hours = parseInt(timeParts[0], 10);
-                    minutes = parseInt(timeParts[1], 10);
-                 }
-              }
-              const date = new Date(year, month, day, hours, minutes);
-              if (!isNaN(date.getTime())) return date.toISOString();
-            } else if (typeof dateStr === 'number') {
-               // Excel serial date
-               const date = new Date(Math.round((dateStr - 25569) * 86400 * 1000));
-               if (!isNaN(date.getTime())) return date.toISOString();
-            }
-            return null;
-          };
-
-          startDate = parseThaiDate(startDateStr, startTimeStr) || undefined;
-          endDate = parseThaiDate(endDateStr, endTimeStr) || undefined;
-
-          const totalProduction = parseInt(String(row['Target'] || row['เป้าหมาย'] || row['ยอดผลิต'] || 1000).replace(/,/g, '')) || 1000;
-          const actualProduction = parseInt(String(row['Actual'] || row['ยอดการผลิดได้'] || row['ยอดการผลิตได้'] || 0).replace(/,/g, '')) || 0;
-
-          const newJob: Partial<ProductionJob> = {
-            id: `EXC-${Date.now()}-${i}`,
-            jobOrder,
-            productItem: row['Product'] || row['สินค้า'] || row['รายการสินค้า'] || 'Unknown Product',
-            machineId: row['Machine'] || row['เครื่องจักร'] || row['เครื่อง'] || 'IP1',
-            totalProduction,
-            actualProduction,
-            startDate,
-            endDate,
-            status: actualProduction >= totalProduction && totalProduction > 0 ? 'Overproduced' : 'Planned',
-            moldCode: row['Mold'] || row['แม่พิมพ์'] || row['รหัสแม่พิมพ์'] || 'Standard',
-            note: row['Note'] || row['หมายเหตุ'] || ''
-          };
-
-          if (jobMap.has(jobOrder)) {
-            const existingJob = jobMap.get(jobOrder)!;
-            existingJob.totalProduction = Math.max(existingJob.totalProduction || 0, newJob.totalProduction || 0);
-            existingJob.actualProduction = Math.max(existingJob.actualProduction || 0, newJob.actualProduction || 0);
-            if (newJob.note) existingJob.note = newJob.note;
-            if (newJob.startDate) existingJob.startDate = newJob.startDate;
-            if (newJob.endDate) existingJob.endDate = newJob.endDate;
-            existingJob.status = (existingJob.actualProduction || 0) >= (existingJob.totalProduction || 0) ? 'Overproduced' : 'Planned';
-          } else {
-            jobMap.set(jobOrder, newJob);
-          }
-        });
-
-        const jobs = Array.from(jobMap.values());
-
-        setParsedJobs(jobs);
-        setError(null);
+        processExcelData(data);
       } catch (err: any) {
         setError('ไม่สามารถอ่านไฟล์ Excel ได้ กรุณาตรวจสอบรูปแบบไฟล์');
       }
     };
     reader.readAsBinaryString(file);
+  };
+
+  const handleFetchPublishedCSV = async () => {
+    if (!publishedUrl) return;
+    setIsFetchingUrl(true);
+    setError(null);
+    try {
+      let fetchUrl = publishedUrl.trim();
+      
+      // Basic validation
+      if (fetchUrl.includes('/html')) {
+        throw new Error('กรุณาใช้ลิงก์แชร์ (Share link) หรือลิงก์ Publish to web');
+      }
+
+      // Automatically format link to /export?format=csv if it is a regular share link
+      if (fetchUrl.includes('/edit')) {
+        fetchUrl = fetchUrl.split('/edit')[0] + '/export?format=csv';
+      } else if (fetchUrl.includes('docs.google.com/spreadsheets') && fetchUrl.includes('/pub') && !fetchUrl.includes('output=csv')) {
+        fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + 'output=csv';
+      }
+
+      const response = await fetch(fetchUrl);
+      if (!response.ok) throw new Error(`ไม่สามารถดึงข้อมูลได้ (Status: ${response.status})`);
+      
+      const csvText = await response.text();
+      
+      const wb = XLSX.read(csvText, { type: 'string' });
+      const wsname = wb.SheetNames[0];
+      const data = XLSX.utils.sheet_to_json(wb.Sheets[wsname]) as any[];
+
+      processExcelData(data);
+    } catch (err: any) {
+      setError(err.message || 'เกิดข้อผิดพลาดในการดึงข้อมูลจากลิงก์');
+    } finally {
+      setIsFetchingUrl(false);
+    }
   };
 
   const confirmImport = async () => {
@@ -371,7 +428,7 @@ export const GoogleSheetsImportModal: React.FC<ImportModalProps> = ({ isOpen, on
             onClick={() => setActiveTab('api')}
             className={`pb-3 px-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'api' ? 'border-blue-500 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
           >
-            <div className="flex items-center gap-2"><FileSpreadsheet size={16}/> เชื่อมต่อ API อัตโนมัติ</div>
+            <div className="flex items-center gap-2"><FileSpreadsheet size={16}/> ลิงก์จาก Google Sheets</div>
           </button>
         </div>
 
@@ -419,27 +476,40 @@ export const GoogleSheetsImportModal: React.FC<ImportModalProps> = ({ isOpen, on
           {activeTab === 'api' && (
             <div className="space-y-4">
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 text-center">
-                <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <FileSpreadsheet size={32} className="text-blue-600" />
+                <div className="bg-emerald-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <FileSpreadsheet size={32} className="text-emerald-600" />
                 </div>
-                <h3 className="text-lg font-bold text-slate-800 mb-2">เชื่อมต่อ Google Sheets API</h3>
+                <h3 className="text-lg font-bold text-slate-800 mb-2">เชื่อมต่อผ่านลิงก์ Google Sheets</h3>
                 <p className="text-slate-600 text-sm mb-6 max-w-md mx-auto">
-                  ดึงข้อมูลใบสั่งผลิตจาก "แบบฟอร์มใหม่ กระปุก-โหล ผูกสูตร" ของคุณโดยอัตโนมัติแบบ Real-time
+                  ตั้งค่าไฟล์ต้นทางให้เป็น "Anyone with the link can view" หรือใช้ลิงก์ Publish to web (CSV) มาวางที่นี่ได้เลย
                 </p>
-                <div className="space-y-3 max-w-sm mx-auto text-left bg-white p-4 rounded-lg border border-slate-200">
+                <div className="space-y-3 max-w-lg mx-auto text-left bg-white p-4 rounded-lg border border-slate-200">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">Google Sheet ID</label>
-                    <input type="text" placeholder="e.g. 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms" className="w-full p-2 border border-slate-300 rounded bg-slate-50 text-sm" disabled />
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">ลิงก์ CSV จาก Google Sheets</label>
+                    <input 
+                      type="text" 
+                      placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv" 
+                      className="w-full p-2 border border-slate-300 rounded focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-sm"
+                      value={publishedUrl}
+                      onChange={(e) => setPublishedUrl(e.target.value)}
+                    />
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">Sheet Name</label>
-                    <input type="text" placeholder="e.g. Sheet1" className="w-full p-2 border border-slate-300 rounded bg-slate-50 text-sm" disabled />
-                  </div>
-                  <button className="w-full py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium mt-2 opacity-50 cursor-not-allowed">
-                    ตั้งค่าการเชื่อมต่อ (Coming Soon)
+                  <button 
+                    onClick={handleFetchPublishedCSV}
+                    disabled={!publishedUrl || isFetchingUrl}
+                    className={`w-full py-2 rounded-lg text-sm font-medium mt-2 transition-colors flex justify-center items-center gap-2
+                      ${publishedUrl && !isFetchingUrl ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-slate-200 text-slate-500 cursor-not-allowed'}`}
+                  >
+                    {isFetchingUrl ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-emerald-200 border-t-white"></div>
+                        กำลังดึงข้อมูล...
+                      </>
+                    ) : (
+                      'ดึงข้อมูล'
+                    )}
                   </button>
                 </div>
-                <p className="text-xs text-slate-400 mt-4">* ฟีเจอร์นี้ต้องการการตั้งค่า Google Cloud OAuth</p>
               </div>
             </div>
           )}

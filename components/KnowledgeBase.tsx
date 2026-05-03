@@ -1,9 +1,10 @@
 
 import React, { useState } from 'react';
 import { CustomKnowledge, InventoryItem, ProductBOM, ProductSpec, MachineMoldCapability } from '../types';
-import { Search, Database, Disc, Settings, Weight, Package, Layers, Info, Box, BookOpen, Plus, Trash2, Edit2, Copy, Printer, ScanLine } from 'lucide-react';
+import { Search, Database, FileDown, Disc, Settings, Weight, Package, Layers, Info, Box, BookOpen, Plus, Trash2, Edit2, Copy, Printer, ScanLine } from 'lucide-react';
 import { BomModal } from './BomModal';
 import { BomScannerView } from './BomScannerView';
+import { ExcelBomImportModal } from './ExcelBomImportModal';
 
 interface KnowledgeBaseProps {
   customKnowledge: CustomKnowledge[];
@@ -25,6 +26,7 @@ export const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ customKnowledge, i
   // BOM Modal State
   const [isBomModalOpen, setIsBomModalOpen] = useState(false);
   const [isBomScannerOpen, setIsBomScannerOpen] = useState(false);
+  const [isExcelImportOpen, setIsExcelImportOpen] = useState(false);
   const [editingBom, setEditingBom] = useState<ProductBOM | null>(null);
 
   const handleOpenAddBom = () => {
@@ -205,6 +207,14 @@ export const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ customKnowledge, i
            <div className="flex items-center gap-3 w-full md:w-auto">
               {activeTab === 'boms' && (
                 <>
+                  <button 
+                    onClick={() => setIsExcelImportOpen(true)}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm"
+                    title="นำเข้าสูตรจาก Excel/CSV"
+                  >
+                    <FileDown size={16} />
+                    Import BOM
+                  </button>
                   <button 
                     onClick={() => setIsBomScannerOpen(true)}
                     className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm"
@@ -476,6 +486,17 @@ export const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ customKnowledge, i
           </div>
         </div>
       )}
+      
+      <ExcelBomImportModal 
+        isOpen={isExcelImportOpen} 
+        onClose={() => setIsExcelImportOpen(false)} 
+        inventory={inventory} 
+        onImport={(importedBoms) => {
+          importedBoms.forEach(bom => onAddBom?.(bom));
+          alert('นำเข้าสูตรการผลิตสำเร็จ ' + importedBoms.length + ' รายการ');
+        }} 
+      />
+
     </div>
   );
 };

@@ -166,6 +166,8 @@ export interface ShiftProductionLog {
   productItem: string;
   target: number;
   actual: number;
+  actualGood?: number;
+  actualStarred?: number;
   variance: number; // actual - target
   isBelowTarget: boolean;
   reason?: string;
@@ -217,6 +219,8 @@ export interface AiMessage {
   fileType?: string;
   timestamp: string;
   processed?: boolean;
+  isTransient?: boolean;
+  agentName?: string;
   actionProposal?: {
     type: 'UPDATE' | 'CREATE' | 'BATCH_UPSERT' | 'GENERATE_FORM' | 'LOG_DOWNTIME';
     data: any;

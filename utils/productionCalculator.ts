@@ -10,13 +10,25 @@ export function calculateProductionSchedule(
   targetQty: number,
   ratePerHour: number,
   allowDayOT: boolean,
-  allowNightOT: boolean
+  allowNightOT: boolean,
+  run24Hours: boolean = false
 ): ScheduleResult {
   if (ratePerHour <= 0 || targetQty <= 0) {
     return { actualStartDate: startDate, endDate: startDate, workingMinutes: 0, totalMinutes: 0 };
   }
 
   let minutesNeeded = (targetQty / ratePerHour) * 60;
+
+  if (run24Hours) {
+    let endDate = new Date(startDate.getTime() + minutesNeeded * 60000);
+    return {
+      actualStartDate: startDate,
+      endDate: endDate,
+      workingMinutes: minutesNeeded,
+      totalMinutes: minutesNeeded
+    };
+  }
+
   let currentDate = new Date(startDate);
   let actualStartDate: Date | null = null;
   let workingMinutes = 0;

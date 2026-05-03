@@ -16,18 +16,29 @@ export const ShiftProductionView: React.FC<ShiftProductionViewProps> = ({ logs, 
   const [filterDate, setFilterDate] = useState('');
 
   // Form State
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    date: string;
+    shift: string;
+    machineId: string;
+    jobId: string;
+    target: number | '';
+    actualGood: number | '';
+    actualStarred: number | '';
+    reason: string;
+  }>({
     date: new Date().toISOString().split('T')[0],
     shift: 'A',
     machineId: '',
     jobId: '',
-    target: 0,
-    actual: 0,
+    target: '',
+    actualGood: '',
+    actualStarred: '',
     reason: '',
   });
 
   const activeJobs = jobs.filter(j => j.status === 'Running' || j.status === 'Planned' || j.status === 'Delayed');
   const selectedJob = jobs.find(j => j.id === formData.jobId);
+  const totalActual = (Number(formData.actualGood) || 0) + (Number(formData.actualStarred) || 0);
 
   const filteredLogs = useMemo(() => {
     return logs.filter(log => {
@@ -42,12 +53,13 @@ export const ShiftProductionView: React.FC<ShiftProductionViewProps> = ({ logs, 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.machineId || !formData.jobId || formData.target <= 0) {
+    if (!formData.machineId || !formData.jobId || !formData.target || Number(formData.target) <= 0) {
       alert('กรุณากรอกข้อมูลให้ครบถ้วน');
       return;
     }
 
-    const variance = formData.actual - formData.target;
+    const targetValue = Number(formData.target) || 0;
+    const variance = totalActual - targetValue;
     const isBelowTarget = variance < 0;
 
     if (isBelowTarget && !formData.reason) {
@@ -62,8 +74,10 @@ export const ShiftProductionView: React.FC<ShiftProductionViewProps> = ({ logs, 
       jobId: formData.jobId,
       jobOrder: selectedJob?.jobOrder,
       productItem: selectedJob?.productItem || 'Unknown',
-      target: Number(formData.target),
-      actual: Number(formData.actual),
+      target: targetValue,
+      actual: totalActual,
+      actualGood: formData.actualGood === '' ? 0 : Number(formData.actualGood),
+      actualStarred: formData.actualStarred === '' ? 0 : Number(formData.actualStarred),
       variance,
       isBelowTarget,
       reason: formData.reason,
@@ -77,13 +91,14 @@ export const ShiftProductionView: React.FC<ShiftProductionViewProps> = ({ logs, 
       machineId: '',
       jobId: '',
       target: 0,
-      actual: 0,
+      actualGood: 0,
+      actualStarred: 0,
       reason: '',
     });
   };
 
   const exportToCSV = () => {
-    const headers = ['วันที่', 'กะ', 'เครื่องจักร', 'Job Order', 'สินค้า', 'เป้าหมาย', 'ผลิตจริง', 'ผลต่าง', 'สถานะ', 'สาเหตุ'];
+    const headers = ['วันที่', 'กะ', 'เครื่องจักร', 'Job Order', 'สินค้า', 'เป้าหมาย', 'ผลิตจริง (รวม)', 'งานดี', 'งานดอกจัน', 'ผลต่าง', 'สถานะ', 'สาเหตุ'];
     const csvData = filteredLogs.map(log => [
       log.date,
       log.shift === 'A' ? 'กะ A' : log.shift === 'B' ? 'กะ B' : log.shift === 'Day' ? 'กะเช้า' : log.shift === 'Night' ? 'กะดึก' : log.shift,
@@ -92,6 +107,8 @@ export const ShiftProductionView: React.FC<ShiftProductionViewProps> = ({ logs, 
       log.productItem,
       log.target,
       log.actual,
+      log.actualGood || 0,
+      log.actualStarred || 0,
       log.variance,
       log.isBelowTarget ? 'ตกแคป' : 'ตามเป้า',
       log.reason || '-'
@@ -213,7 +230,17 @@ export const ShiftProductionView: React.FC<ShiftProductionViewProps> = ({ logs, 
                       <div className="text-sm text-gray-500">{log.jobOrder || '-'}</div>
                     </td>
                     <td className="p-4 text-right text-gray-600">{(log.target || 0).toLocaleString()}</td>
-                    <td className="p-4 text-right font-medium text-gray-900">{(log.actual || 0).toLocaleString()}</td>
+                    <td className="p-4 text-right">
+                      <div className="font-medium text-gray-900 border-b border-gray-100 pb-1 mb-1">
+                        {(log.actual || 0).toLocaleString()} <span className="text-xs font-normal text-gray-500">ชิ้น</span>
+                      </div>
+                      {(log.actualGood !== undefined || log.actualStarred !== undefined) && (
+                        <div className="flex flex-col gap-0.5 text-xs text-left w-fit ml-auto">
+                           {log.actualGood !== undefined && <div className="text-emerald-600 flex justify-between gap-2"><span>งานดี:</span> <span>{log.actualGood.toLocaleString()}</span></div>}
+                           {log.actualStarred !== undefined && <div className="text-amber-600 flex justify-between gap-2"><span>ดอกจัน:</span> <span>{log.actualStarred.toLocaleString()}</span></div>}
+                        </div>
+                      )}
+                    </td>
                     <td className={`p-4 text-right font-medium ${(log.variance || 0) < 0 ? 'text-red-600' : 'text-green-600'}`}>
                       {(log.variance || 0) > 0 ? '+' : ''}{(log.variance || 0).toLocaleString()}
                     </td>
@@ -282,10 +309,14 @@ export const ShiftProductionView: React.FC<ShiftProductionViewProps> = ({ logs, 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">งานที่กำลังผลิต (Job)</label>
                 <SearchableSelect
-                  options={activeJobs.map(job => ({
-                    value: job.id,
-                    label: `${job.machineId} - ${job.jobOrder} (${job.productItem})`
-                  }))}
+                  options={activeJobs.map(job => {
+                    const hasColor = job.color && job.color !== '-';
+                    const moldInfo = job.moldCode && job.moldCode !== '-' ? ` แม่พิมพ์ ${job.moldCode}` : '';
+                    return {
+                      value: job.id,
+                      label: `${job.machineId} - ${job.jobOrder} (${job.productItem}${moldInfo})${hasColor ? ` [สี: ${job.color}]` : ''}`,
+                    };
+                  })}
                   value={formData.jobId}
                   onChange={(jobId) => {
                     const job = jobs.find(j => j.id === jobId);
@@ -301,7 +332,7 @@ export const ShiftProductionView: React.FC<ShiftProductionViewProps> = ({ logs, 
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">เป้าหมาย (Capacity/Shift)</label>
                   <input
@@ -309,28 +340,50 @@ export const ShiftProductionView: React.FC<ShiftProductionViewProps> = ({ logs, 
                     required
                     min="1"
                     value={formData.target}
-                    onChange={e => setFormData({...formData, target: Number(e.target.value)})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 bg-gray-50"
+                    onChange={e => setFormData({...formData, target: e.target.value === '' ? '' : Number(e.target.value)})}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 bg-gray-50 font-bold"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">ยอดผลิตจริง</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    ยอดผลิตได้ <span className="text-emerald-600">(งานดี)</span>
+                  </label>
                   <input
                     type="number"
                     required
                     min="0"
-                    value={formData.actual}
-                    onChange={e => setFormData({...formData, actual: Number(e.target.value)})}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    placeholder="0"
+                    value={formData.actualGood}
+                    onChange={e => setFormData({...formData, actualGood: e.target.value === '' ? '' : Number(e.target.value)})}
+                    className="w-full px-4 py-2 border border-emerald-300 rounded-lg focus:ring-2 focus:ring-emerald-500 font-bold text-emerald-700"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    ยอดผลิตได้ <span className="text-amber-500">(งานดอกจัน/ตกเกรด)</span>
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    placeholder="0"
+                    value={formData.actualStarred}
+                    onChange={e => setFormData({...formData, actualStarred: e.target.value === '' ? '' : Number(e.target.value)})}
+                    className="w-full px-4 py-2 border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 font-bold text-amber-600"
                   />
                 </div>
               </div>
 
-              {formData.actual < formData.target && formData.target > 0 && (
+              <div className="bg-indigo-50 p-4 rounded-lg flex justify-between items-center border border-indigo-100">
+                <span className="font-medium text-indigo-900">ยอดผลิตจริงรวม (Total Actual)</span>
+                <span className="text-2xl font-bold text-indigo-700">{totalActual.toLocaleString()}</span>
+              </div>
+
+              {totalActual < Number(formData.target) && Number(formData.target) > 0 && (
                 <div className="p-4 bg-red-50 rounded-lg border border-red-100">
                   <div className="flex items-center gap-2 text-red-800 mb-2 font-medium">
                     <AlertTriangle size={18} />
-                    ยอดผลิตต่ำกว่าเป้าหมาย (ตกแคป {formData.target - formData.actual} ชิ้น)
+                    ยอดผลิตต่ำกว่าเป้าหมาย (ตกแคป {Number(formData.target) - totalActual} ชิ้น)
                   </div>
                   <label className="block text-sm font-medium text-red-700 mb-1">สาเหตุที่ตกแคป *</label>
                   <textarea

@@ -10,9 +10,10 @@ interface FormTemplatesViewProps {
   onViewForm: (form: FormTemplate) => void;
   onDeleteForm: (id: string) => void;
   onSaveForm: (html: string, title: string) => void;
+  onOpenAssistant?: () => void;
 }
 
-export const FormTemplatesView: React.FC<FormTemplatesViewProps> = ({ forms, onViewForm, onDeleteForm, onSaveForm }) => {
+export const FormTemplatesView: React.FC<FormTemplatesViewProps> = ({ forms, onViewForm, onDeleteForm, onSaveForm, onOpenAssistant }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -95,7 +96,7 @@ export const FormTemplatesView: React.FC<FormTemplatesViewProps> = ({ forms, onV
            </button>
            <button 
              className="flex-1 md:flex-none bg-brand-50 text-brand-700 px-4 py-2 rounded-xl font-medium hover:bg-brand-100 transition-colors flex items-center justify-center gap-2"
-             onClick={() => alert('หากต้องการสร้างฟอร์มใหม่ กรุณาเปิดผู้ช่วย AI แล้วส่งรูปภาพหรือคำสั่งให้ AI สร้างให้ครับ')}
+             onClick={() => onOpenAssistant ? onOpenAssistant() : alert('หากต้องการสร้างฟอร์มใหม่ กรุณาเปิดผู้ช่วย AI')}
            >
              <Sparkles size={18} />
              <span>ให้ AI สร้างฟอร์มใหม่</span>

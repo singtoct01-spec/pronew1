@@ -48,7 +48,7 @@ export interface BOMCalculation {
   };
 }
 
-export function calculateBOM(productName: string, targetQty: number, color?: string, machineId?: string): BOMCalculation {
+export function calculateBOM(productName: string, targetQty: number, color?: string, machineId?: string, boms?: any[], inventory?: any[]): BOMCalculation {
   const rows: BOMRow[] = [];
   let totalTags = 0;
   let qtyPerTag = 0;
@@ -60,7 +60,154 @@ export function calculateBOM(productName: string, targetQty: number, color?: str
   const nameUpper = productName.toUpperCase();
   const displayColor = color && color !== '-' ? color : 'สีใส';
 
-  if (nameUpper.includes('B01')) {
+  // 1. Try to find dynamic BOM from the database
+  const dynamicBom = boms ? boms.find(b => b.productItem === productName || b.productItem.toUpperCase() === nameUpper) : null;
+
+  if (dynamicBom && dynamicBom.materials && inventory) {
+    // We found a dynamic BOM in the database!
+    let totalMaterialWeightKg = 0;
+    
+    // Process basic generic details
+    productDetails = { 
+      type: productName, 
+      structure: '-', 
+      weight: '-', 
+      mouthWidth: '-', 
+      jarWidth: '-', 
+      height: '-', 
+      capacity: '-' 
+    };
+
+    let isInjection = false;
+    let isBlow = false;
+    let packageItem = null;
+    let materialRows: any[] = [];
+    
+    // Separate materials into resins/masterbatch vs packaging
+    dynamicBom.materials.forEach((mat: any, index: number) => {
+      const invItem = inventory.find(i => i.id === mat.inventoryItemId);
+      if (!invItem) return;
+
+      const isPackaging = invItem.category === 'Packaging' || invItem.name.includes('กล่อง') || invItem.name.includes('ถุง');
+      const isPreform = invItem.category === 'Preform' || invItem.name.toLowerCase().includes('preform');
+      const isResin = invItem.category === 'Resin' || invItem.category === 'Pigment' || invItem.name.includes('PE') || invItem.name.includes('Master Batch');
+
+      if (isPreform) isBlow = true;
+      if (isResin) isInjection = true;
+
+      // Calculate usage
+      const requiredQty = mat.qtyPerUnit * targetQty;
+      
+      // Attempt to guess pack requirements from packaging
+      if (isPackaging && !packageItem) {
+         packageItem = { name: invItem.name, qty: requiredQty };
+         // Guess qty per pack
+         qtyPerTag = Math.ceil(targetQty / requiredQty);
+         totalTags = Math.ceil(targetQty / qtyPerTag);
+         tagType = invItem.name.includes('กล่อง') ? 'box' : 'bag';
+      }
+
+      if (isResin && mat.unitType === 'kg') {
+         totalMaterialWeightKg += requiredQty;
+      }
+
+      materialRows.push({
+         no: materialRows.length + 1,
+         itemName: invItem.name,
+         packSize: 25, // Fallback
+         usageQty: Number(requiredQty.toFixed(2)),
+         usageUnit: mat.unitType,
+         purchaseQty: invItem.unit === mat.unitType ? '-' : '-', // Not enough info for strict package conversion in generic form
+         purchaseUnit: '',
+         note: ''
+      });
+    });
+
+    if (packageItem) {
+       qtyPerTag = qtyPerTag || 1000;
+       totalTags = totalTags || 1;
+    } else {
+       qtyPerTag = targetQty;
+       totalTags = 1;
+    }
+
+    // Attempt to guess structure formula string
+    const structureParts = dynamicBom.materials.map((m: any) => {
+       const invItem = inventory.find(i => i.id === m.inventoryItemId);
+       if (invItem && (invItem.category === 'Resin' || invItem.category === 'Pigment')) {
+           return invItem.name;
+       }
+       return null;
+    }).filter(Boolean);
+    
+    if (structureParts.length > 0) {
+        productDetails.structure = structureParts.join(' + ');
+    }
+
+    // Build the pseudo-Injection or Blow details needed for the template if they exist
+    if (isInjection) {
+      const mixRounds = Math.ceil(totalMaterialWeightKg / 50) || 1;
+      let lldpeInfo = { percent: 0, kg: 0, kgPerRound: 0 };
+      let hdpeInfo = { percent: 0, kg: 0, kgPerRound: 0 };
+      let masterBatchInfo = { percent: 0, kg: 0, kgPerRound: 0 };
+      let scrapInfo = { percent: 0, kg: '-', kgPerRound: '-' };
+
+      dynamicBom.materials.forEach((mat: any) => {
+         const invItem = inventory.find(i => i.id === mat.inventoryItemId);
+         if (!invItem) return;
+         const reqKg = mat.qtyPerUnit * targetQty;
+         const pct = Math.round((reqKg / totalMaterialWeightKg) * 100);
+         const kgPerRd = Number((reqKg / mixRounds).toFixed(2));
+
+         if (invItem.name.includes('HDPE')) {
+             hdpeInfo = { percent: pct, kg: reqKg, kgPerRound: kgPerRd };
+         } else if (invItem.name.includes('LLDPE')) {
+             lldpeInfo = { percent: pct, kg: reqKg, kgPerRound: kgPerRd };
+         } else if (invItem.name.includes('Master Batch') || invItem.category === 'Pigment') {
+             masterBatchInfo = { percent: pct, kg: reqKg, kgPerRound: kgPerRd };
+         }
+      });
+
+      injection = {
+        machine: machineId || 'IO1',
+        mold: productName,
+        totalRawMaterialKg: Number(totalMaterialWeightKg.toFixed(2)),
+        mixRounds: mixRounds,
+        lldpe: lldpeInfo,
+        hdpe: hdpeInfo,
+        scrap: scrapInfo as any,
+        masterBatch: masterBatchInfo,
+        packMethod: tagType === 'box' ? 'กล่อง' : 'แพ็ค',
+        qtyPerPack: qtyPerTag,
+        totalPacks: totalTags
+      };
+    } else if (isBlow) {
+       let preformName = 'Preform';
+       let preformQty = targetQty;
+       dynamicBom.materials.forEach((m: any) => {
+           const invItem = inventory.find(i => i.id === m.inventoryItemId);
+           if (invItem && invItem.name.toLowerCase().includes('preform')) {
+               preformName = invItem.name;
+               preformQty = m.qtyPerUnit * targetQty;
+           }
+       });
+
+       blow = {
+          machine: machineId || 'B1',
+          mold: productName,
+          preformName: preformName,
+          preformQty: preformQty,
+          packMethod: tagType === 'box' ? 'กล่อง' : 'แพ็คถุง',
+          qtyPerPack: qtyPerTag,
+          totalPacks: totalTags,
+          note: '* อ้างอิงจากสูตรการผลิตที่ตั้งค่าไว้'
+       };
+    }
+
+    rows.push(...materialRows);
+
+  } else if (nameUpper.includes('B01')) {
+    // --- Legacy / Hardcoded Fallbacks for existing generic tests ---
     const preformQty = Math.ceil(targetQty * 1.02);
     const bagQty = Math.ceil(targetQty / 45);
     totalTags = bagQty;
@@ -136,7 +283,7 @@ export function calculateBOM(productName: string, targetQty: number, color?: str
     const hdpe = Math.round(totalWeightKg * 0.20);
     const masterBatch = Number((totalWeightKg * 0.02).toFixed(2));
     
-    const mixRounds = Math.ceil(totalWeightKg / 52.3); // Approx 52.3kg per round
+    const mixRounds = Math.ceil(totalWeightKg / 52.3); 
     
     const smallBagQty = Math.ceil(targetQty / 50);
     const boxQty = Math.ceil(targetQty / 1000);
@@ -197,7 +344,7 @@ export function calculateBOM(productName: string, targetQty: number, color?: str
     });
 
   } else {
-    // Fallback for unknown products
+    // Fallback for unknown products without dynamic BOM
     totalTags = Math.ceil(targetQty / 100);
     qtyPerTag = 100;
     rows.push({

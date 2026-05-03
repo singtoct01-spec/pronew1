@@ -1,16 +1,18 @@
 import React from 'react';
-import { ProductionJob } from '../types';
+import { ProductionJob, ProductBOM, InventoryItem } from '../types';
 import { calculateBOM } from '../utils/bomCalculator';
 
 import { formatDateTime } from '../utils/dateUtils';
 
 interface ProductionOrderPrintProps {
   job: ProductionJob;
+  boms: ProductBOM[];
+  inventory: InventoryItem[];
   onBack: () => void;
 }
 
-export const ProductionOrderPrint: React.FC<ProductionOrderPrintProps> = ({ job, onBack }) => {
-  const bom = calculateBOM(job.productItem, job.totalProduction, job.color, job.machineId);
+export const ProductionOrderPrint: React.FC<ProductionOrderPrintProps> = ({ job, boms, inventory, onBack }) => {
+  const bom = calculateBOM(job.productItem, job.totalProduction, job.color, job.machineId, boms, inventory);
   
   const handlePrint = () => {
     window.print();

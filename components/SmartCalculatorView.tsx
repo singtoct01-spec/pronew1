@@ -13,6 +13,7 @@ export const SmartCalculatorView: React.FC = () => {
   const [startTimeStr, setStartTimeStr] = useState<string>("19:00");
   const [allowDayOT, setAllowDayOT] = useState<boolean>(false);
   const [allowNightOT, setAllowNightOT] = useState<boolean>(false);
+  const [run24Hours, setRun24Hours] = useState<boolean>(false);
 
   const [result, setResult] = useState<{
     actualStartDate: Date;
@@ -24,12 +25,12 @@ export const SmartCalculatorView: React.FC = () => {
   useEffect(() => {
     if (targetQty > 0 && ratePerHour > 0 && startDateStr && startTimeStr) {
       const start = new Date(`${startDateStr}T${startTimeStr}`);
-      const res = calculateProductionSchedule(start, targetQty, ratePerHour, allowDayOT, allowNightOT);
+      const res = calculateProductionSchedule(start, targetQty, ratePerHour, allowDayOT, allowNightOT, run24Hours);
       setResult(res);
     } else {
       setResult(null);
     }
-  }, [targetQty, ratePerHour, startDateStr, startTimeStr, allowDayOT, allowNightOT]);
+  }, [targetQty, ratePerHour, startDateStr, startTimeStr, allowDayOT, allowNightOT, run24Hours]);
 
   const formatDateTime = (date: Date) => {
     return date.toLocaleString('th-TH', {
@@ -117,31 +118,49 @@ export const SmartCalculatorView: React.FC = () => {
               </div>
 
               <div className="pt-2 border-t border-slate-100">
-                <label className="block text-sm font-bold text-slate-700 mb-3">เงื่อนไขการทำ OT</label>
+                <label className="block text-sm font-bold text-slate-700 mb-3">รูปแบบการทำงาน</label>
                 <div className="space-y-3">
                   <label className="flex items-center justify-between p-3 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50 transition-colors">
                     <div>
-                      <span className="font-medium text-slate-800 block">เปิดทำ OT กะเช้า</span>
-                      <span className="text-xs text-slate-500">17:00 - 20:00 น. (3 ชม.)</span>
+                      <span className="font-medium text-slate-800 block">เดินเครื่องตลอด 24 ชั่วโมง (No Break)</span>
+                      <span className="text-xs text-slate-500">ไม่มีการหยุดพักเบรกใดๆ ทำงานต่อเนื่อง</span>
                     </div>
                     <div className="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
-                      <input type="checkbox" checked={allowDayOT} onChange={(e) => setAllowDayOT(e.target.checked)} className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" style={{ right: allowDayOT ? '0' : '1.5rem', borderColor: allowDayOT ? '#10b981' : '#cbd5e1' }}/>
-                      <label className={`toggle-label block overflow-hidden h-6 rounded-full cursor-pointer ${allowDayOT ? 'bg-emerald-500' : 'bg-slate-300'}`}></label>
-                    </div>
-                  </label>
-
-                  <label className="flex items-center justify-between p-3 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50 transition-colors">
-                    <div>
-                      <span className="font-medium text-slate-800 block">เปิดทำ OT กะดึก</span>
-                      <span className="text-xs text-slate-500">05:00 - 08:00 น. (3 ชม.)</span>
-                    </div>
-                    <div className="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
-                      <input type="checkbox" checked={allowNightOT} onChange={(e) => setAllowNightOT(e.target.checked)} className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" style={{ right: allowNightOT ? '0' : '1.5rem', borderColor: allowNightOT ? '#10b981' : '#cbd5e1' }}/>
-                      <label className={`toggle-label block overflow-hidden h-6 rounded-full cursor-pointer ${allowNightOT ? 'bg-emerald-500' : 'bg-slate-300'}`}></label>
+                      <input type="checkbox" checked={run24Hours} onChange={(e) => setRun24Hours(e.target.checked)} className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" style={{ right: run24Hours ? '0' : '1.5rem', borderColor: run24Hours ? '#10b981' : '#cbd5e1' }}/>
+                      <label className={`toggle-label block overflow-hidden h-6 rounded-full cursor-pointer ${run24Hours ? 'bg-emerald-500' : 'bg-slate-300'}`}></label>
                     </div>
                   </label>
                 </div>
               </div>
+
+              {!run24Hours && (
+                <div className="pt-2 border-t border-slate-100">
+                  <label className="block text-sm font-bold text-slate-700 mb-3">เงื่อนไขการทำ OT</label>
+                  <div className="space-y-3">
+                    <label className="flex items-center justify-between p-3 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50 transition-colors">
+                      <div>
+                        <span className="font-medium text-slate-800 block">เปิดทำ OT กะเช้า</span>
+                        <span className="text-xs text-slate-500">17:00 - 20:00 น. (3 ชม.)</span>
+                      </div>
+                      <div className="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
+                        <input type="checkbox" checked={allowDayOT} onChange={(e) => setAllowDayOT(e.target.checked)} className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" style={{ right: allowDayOT ? '0' : '1.5rem', borderColor: allowDayOT ? '#10b981' : '#cbd5e1' }}/>
+                        <label className={`toggle-label block overflow-hidden h-6 rounded-full cursor-pointer ${allowDayOT ? 'bg-emerald-500' : 'bg-slate-300'}`}></label>
+                      </div>
+                    </label>
+
+                    <label className="flex items-center justify-between p-3 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50 transition-colors">
+                      <div>
+                        <span className="font-medium text-slate-800 block">เปิดทำ OT กะดึก</span>
+                        <span className="text-xs text-slate-500">05:00 - 08:00 น. (3 ชม.)</span>
+                      </div>
+                      <div className="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
+                        <input type="checkbox" checked={allowNightOT} onChange={(e) => setAllowNightOT(e.target.checked)} className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" style={{ right: allowNightOT ? '0' : '1.5rem', borderColor: allowNightOT ? '#10b981' : '#cbd5e1' }}/>
+                        <label className={`toggle-label block overflow-hidden h-6 rounded-full cursor-pointer ${allowNightOT ? 'bg-emerald-500' : 'bg-slate-300'}`}></label>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -232,6 +251,9 @@ export const SmartCalculatorView: React.FC = () => {
               <li><span className="font-medium">เวลาพัก:</span> 00:00 - 01:00 น.</li>
               <li><span className="font-medium">เวลาทำ OT:</span> 05:00 - 08:00 น.</li>
             </ul>
+          </div>
+          <div className="md:col-span-2 mt-2 pt-4 border-t border-blue-200 text-blue-900">
+            <span className="font-bold">หมายเหตุ:</span> สำหรับเครื่องจักรที่ทำงานต่อเนื่องไม่มีพักเบรก (เช่น เครื่องเป่าขวด หรือเครื่องออโต้) สามารถเปิดใช้งานโหมด <span className="font-medium bg-blue-100 px-1 rounded">เดินเครื่องตลอด 24 ชั่วโมง (No Break)</span> ได้
           </div>
         </div>
       </div>
